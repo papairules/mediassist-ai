@@ -1,0 +1,8 @@
+principal_id,region,role,hospital_id
+rep_east,East,service_rep,H-E101
+rep_east,East,service_rep,H-E102
+rep_west,West,service_rep,H-W201
+rep_west,West,service_rep,H-W202
+rep_central,Central,service_rep,H-C301
+clinical_reviewer,East,clinical_reviewer,H-E101
+clinical_reviewer,East,clinical_reviewer,H-E102

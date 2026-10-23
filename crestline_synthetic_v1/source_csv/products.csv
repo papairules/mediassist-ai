@@ -1,0 +1,11 @@
+sku,brand,category,gauge,color,length_mm,latex_free,sterile,manufacturer_status
+AV-IV22-BLU-LF,Aurevia,IV catheter,22,blue,25,true,true,active
+BR-IV22-BLU-LF,Borealis,IV catheter,22,blue,25,true,true,active
+BR-IV22-BLU-LX,Borealis,IV catheter,22,blue,25,false,true,active
+BR-IV20-PNK-LF,Borealis,IV catheter,20,pink,32,true,true,active
+NV-IV22-BLU-LF,Noventa,IV catheter,22,blue,25,true,true,active
+AV-IV20-PNK-LF,Aurevia,IV catheter,20,pink,32,true,true,active
+AV-SYR10-LF,Aurevia,Syringe,,clear,,true,true,active
+BR-SYR10-LF,Borealis,Syringe,,clear,,true,true,active
+AV-DRS-10X10,Aurevia,Dressing,,white,100,true,true,active
+BR-DRS-10X10,Borealis,Dressing,,white,100,true,true,active

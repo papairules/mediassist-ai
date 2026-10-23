@@ -1,0 +1,8 @@
+shipment_id,order_id,line_id,quantity_shipped,carrier,tracking_id,carrier_status,last_scan_at,carrier_estimated_arrival,delivered_at
+SHIP-001,ORD-1001,1,60,Atlas Parcel,SYN-AT-5501,in_transit,2026-10-22T14:20:00Z,2026-10-24,
+SHIP-004,ORD-1004,1,25,Atlas Parcel,SYN-AT-5504,delivered,2026-10-20T15:00:00Z,2026-10-20,2026-10-20T15:00:00Z
+SHIP-005,ORD-1005,1,12,Metro Freight,SYN-MF-5505,in_transit,2026-10-22T19:00:00Z,2026-10-23,
+SHIP-006,ORD-1006,1,20,Metro Freight,SYN-MF-5506,in_transit,2026-10-21T20:00:00Z,2026-10-25,
+SHIP-007,ORD-1007,1,15,Atlas Parcel,SYN-AT-5507,delivered,2026-10-19T14:10:00Z,2026-10-19,2026-10-19T14:10:00Z
+SHIP-010,ORD-1010,1,30,Atlas Parcel,SYN-AT-5510,in_transit,2026-10-22T16:00:00Z,2026-10-25,
+SHIP-009,ORD-1009,1,30,Atlas Parcel,SYN-AT-5509,in_transit,2026-10-22T16:00:00Z,2026-10-26,

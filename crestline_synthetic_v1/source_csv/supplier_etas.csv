@@ -1,0 +1,9 @@
+source_record_id,order_id,line_id,expected_supplier_restock_date,supplier_reported_at,ingested_at,date_classification,source_note
+ETA-001-OLD,ORD-1001,1,2026-10-26,2026-10-20T06:00:00Z,2026-10-20T06:00:00Z,unverified_supplier_restock_estimate,"Supplier estimate - historical, superseded"
+ETA-001-NEW,ORD-1001,1,2026-10-28,2026-10-22T05:00:00Z,2026-10-22T06:00:00Z,unverified_supplier_restock_estimate,"Supplier restock estimate, not hospital delivery commitment"
+ETA-002-OLD,ORD-1002,1,2026-10-24,2026-10-15T05:00:00Z,2026-10-15T05:00:00Z,unverified_supplier_restock_estimate,"Historical, superseded"
+ETA-002-NEW,ORD-1002,1,2026-10-29,2026-10-22T05:00:00Z,2026-10-22T06:00:00Z,unverified_supplier_restock_estimate,Revised supplier restock estimate
+ETA-003-MISSING,ORD-1003,1,,2026-10-22T05:00:00Z,2026-10-22T06:00:00Z,unverified_supplier_restock_estimate,Supplier did not provide a date
+ETA-006-STALE,ORD-1006,1,2026-10-26,2026-10-18T05:00:00Z,2026-10-18T05:00:00Z,unverified_supplier_restock_estimate,"Old record, flag for follow-up"
+ETA-008-MISSING,ORD-1008,1,,2026-10-22T05:00:00Z,2026-10-22T06:00:00Z,unverified_supplier_restock_estimate,No supplier ETA available
+ETA-010-MISSING,ORD-1010,2,,2026-10-22T05:00:00Z,2026-10-22T06:00:00Z,unverified_supplier_restock_estimate,No date for the backordered dressing line

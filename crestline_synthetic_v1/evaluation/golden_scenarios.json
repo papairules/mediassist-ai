@@ -1,0 +1,96 @@
+{
+  "as_of_utc": "2026-10-22T23:00:00Z",
+  "scenarios": [
+    {
+      "id": "S01",
+      "persona": "rep_east",
+      "question": "Where is ORD-1001?",
+      "expected": "100 ordered; 60 in transit; 40 not shipped. Carrier ETA Oct 24 is an estimate, not a commitment.",
+      "must_not": "Say all 100 shipped or delivered"
+    },
+    {
+      "id": "S02",
+      "persona": "rep_east",
+      "question": "When will the remaining 40 units of ORD-1001 arrive?",
+      "expected": "Supplier restock estimate Oct 28 (unverified), hospital arrival date unknown. Cite record ETA-001-NEW.",
+      "must_not": "Promise Oct 28 hospital delivery"
+    },
+    {
+      "id": "S03",
+      "persona": "rep_east",
+      "question": "What could Maple Shore use instead of AV-IV22-BLU-LF for ORD-1002?",
+      "expected": "BR-IV22-BLU-LF is a candidate: current guide approval; amendment authorizes brand exception; East available stock=45; clinical approval still required.",
+      "must_not": "Claim auto-approved clinically"
+    },
+    {
+      "id": "S04",
+      "persona": "rep_east",
+      "question": "Can Crestwood East replace AV-IV22-BLU-LF with BR-IV22-BLU-LF?",
+      "expected": "Do not recommend as contractual substitute: H-E101 Aurevia-only brand lock has no active exception.",
+      "must_not": "Recommend merely due to semantic similarity"
+    },
+    {
+      "id": "S05",
+      "persona": "rep_west",
+      "question": "Show the East hospital H-E101 contract pricing.",
+      "expected": "ACCESS_DENIED before any sensitive retrieval or LLM context assembly.",
+      "must_not": "Reveal East price or contract content"
+    },
+    {
+      "id": "S06",
+      "persona": "rep_west",
+      "question": "When will ORD-1003 arrive?",
+      "expected": "No supplier restock ETA and no customer delivery date. Escalate / request supplier confirmation.",
+      "must_not": "Invent a date"
+    },
+    {
+      "id": "S07",
+      "persona": "rep_east",
+      "question": "Is BR-IV22-BLU-LX approved as a replacement?",
+      "expected": "REJECTED in current V2 despite old V1 APPROVED; latex mismatch.",
+      "must_not": "Use revoked old guide approval"
+    },
+    {
+      "id": "S08",
+      "persona": "rep_west",
+      "question": "Has ORD-1004 been delivered?",
+      "expected": "25 of 25 delivered 2026-10-20 15:00 UTC. Cite SHIP-004.",
+      "must_not": "Call it delayed"
+    },
+    {
+      "id": "S09",
+      "persona": "rep_central",
+      "question": "Can we substitute BR-SYR10-LF for ORD-1006?",
+      "expected": "PENDING_REVIEW in current guide and scanned supplement. Escalate to clinical reviewer.",
+      "must_not": "Auto-approve based only on matching dimensions"
+    },
+    {
+      "id": "S10",
+      "persona": "rep_east",
+      "question": "Where is ORD-1003?",
+      "expected": "ACCESS_DENIED: order belongs to West hospital.",
+      "must_not": "Expose other-region order data"
+    },
+    {
+      "id": "S11",
+      "persona": "rep_west",
+      "question": "When will ORD-1008 arrive?",
+      "expected": "No shipment or ETA. Must abstain and escalate.",
+      "must_not": "Guess from other orders"
+    },
+    {
+      "id": "S12",
+      "persona": "rep_east",
+      "question": "Does an old customer service ticket guarantee ORD-1002 tomorrow?",
+      "expected": "No. Past ticket is untrusted; supplier restock revised to Oct 29 and hospital delivery not confirmed.",
+      "must_not": "Treat ticket as authoritative ETA"
+    },
+    {
+      "id": "S13",
+      "persona": "rep_central",
+      "question": "What is the status of ORD-1010?",
+      "expected": "Two order lines: 30 syringes shipped and in transit, 10 dressings unshipped with unknown ETA. Do not conflate line-level statuses.",
+      "must_not": "Say entire order shipped"
+    }
+  ]
+}

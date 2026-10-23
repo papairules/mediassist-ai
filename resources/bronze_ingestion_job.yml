@@ -1,0 +1,26 @@
+resources:
+  jobs:
+    bronze_ingestion:
+      name: mediassist-bronze-ingestion
+      description: Incrementally ingest registered CSV sources into Bronze Delta tables.
+      max_concurrent_runs: 1
+      parameters:
+        - name: source_id
+          default: ""
+      tasks:
+        - task_key: ingest_registered_sources
+          environment_key: default
+          python_wheel_task:
+            package_name: mediassist_bronze
+            entry_point: run_bronze_ingestion
+            named_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.bronze_schema}
+              volume: ${var.ingestion_volume}
+              source_id: "{{job.parameters.source_id}}"
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/mediassist_bronze-*.whl

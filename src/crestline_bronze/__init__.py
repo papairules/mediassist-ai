@@ -1,0 +1,4 @@
+"""MediAssist metadata-driven Bronze ingestion package."""
+
+__version__ = "0.1.0"
+

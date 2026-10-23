@@ -1,0 +1,33 @@
+bundle:
+  name: mediassist_bronze
+
+include:
+  - resources/*.yml
+
+artifacts:
+  default:
+    type: whl
+    path: .
+    build: |
+      python -c "from pathlib import Path; [path.unlink() for path in Path('dist').glob('mediassist_bronze-*.whl')]"
+      python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+
+variables:
+  catalog:
+    description: Unity Catalog catalog containing the Bronze schema.
+    default: workspace
+  bronze_schema:
+    description: Existing Unity Catalog schema for Bronze tables.
+    default: crestline_bronze
+  ingestion_volume:
+    description: Existing Unity Catalog volume used for landing files and checkpoints.
+    default: mediassist_ingestion
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://dbc-290bff82-e0e2.cloud.databricks.com
+      profile: abinroy90@gmail.com
+      artifact_path: /Volumes/workspace/crestline_bronze/mediassist_ingestion/bundle_artifacts/${workspace.current_user.short_name}

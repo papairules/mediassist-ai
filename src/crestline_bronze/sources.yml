@@ -1,0 +1,123 @@
+version: 1
+sources:
+  - source_id: hospitals
+    source_file: hospitals.csv
+    target_table: hospitals_raw
+    landing_subpath: hospitals
+    keys: [hospital_id]
+    columns:
+      hospital_id: {type: string, required: true}
+      hospital_name: {type: string, required: true}
+      region: {type: string, required: true}
+      contract_id: {type: string, required: true}
+
+  - source_id: products
+    source_file: products.csv
+    target_table: products_raw
+    landing_subpath: products
+    keys: [sku]
+    columns:
+      sku: {type: string, required: true}
+      brand: {type: string, required: true}
+      category: {type: string, required: true}
+      gauge: {type: integer, required: false}
+      color: {type: string, required: true}
+      length_mm: {type: integer, required: false}
+      latex_free: {type: boolean, required: true}
+      sterile: {type: boolean, required: true}
+      manufacturer_status: {type: string, required: true}
+
+  - source_id: orders
+    source_file: orders.csv
+    target_table: orders_raw
+    landing_subpath: orders
+    keys: [order_id]
+    columns:
+      order_id: {type: string, required: true}
+      hospital_id: {type: string, required: true}
+      placed_at: {type: timestamp, required: true}
+      erp_loaded_at: {type: timestamp, required: true}
+
+  - source_id: order_lines
+    source_file: order_lines.csv
+    target_table: order_lines_raw
+    landing_subpath: order_lines
+    keys: [order_id, line_id]
+    columns:
+      order_id: {type: string, required: true}
+      line_id: {type: string, required: true}
+      sku: {type: string, required: true}
+      quantity_ordered: {type: integer, required: true}
+      uom: {type: string, required: true}
+
+  - source_id: shipments
+    source_file: shipments.csv
+    target_table: shipments_raw
+    landing_subpath: shipments
+    keys: [shipment_id]
+    columns:
+      shipment_id: {type: string, required: true}
+      order_id: {type: string, required: true}
+      line_id: {type: string, required: true}
+      quantity_shipped: {type: integer, required: true}
+      carrier: {type: string, required: true}
+      tracking_id: {type: string, required: true}
+      carrier_status: {type: string, required: true}
+      last_scan_at: {type: timestamp, required: true}
+      carrier_estimated_arrival: {type: date, required: false}
+      delivered_at: {type: timestamp, required: false}
+
+  - source_id: inventory
+    source_file: inventory.csv
+    target_table: inventory_raw
+    landing_subpath: inventory
+    keys: [warehouse_id, sku, snapshot_at]
+    columns:
+      warehouse_id: {type: string, required: true}
+      region: {type: string, required: true}
+      sku: {type: string, required: true}
+      quantity_on_hand: {type: integer, required: true}
+      quantity_reserved: {type: integer, required: true}
+      snapshot_at: {type: timestamp, required: true}
+
+  - source_id: supplier_etas
+    source_file: supplier_etas.csv
+    target_table: supplier_etas_raw
+    landing_subpath: supplier_etas
+    keys: [source_record_id]
+    columns:
+      source_record_id: {type: string, required: true}
+      order_id: {type: string, required: true}
+      line_id: {type: string, required: true}
+      expected_supplier_restock_date: {type: date, required: false}
+      supplier_reported_at: {type: timestamp, required: true}
+      ingested_at: {type: timestamp, required: true}
+      date_classification: {type: string, required: true}
+      source_note: {type: string, required: true}
+
+  - source_id: document_manifest
+    source_file: document_manifest.csv
+    target_table: document_manifest_raw
+    landing_subpath: document_manifest
+    keys: [document_id]
+    columns:
+      document_id: {type: string, required: true}
+      relative_path: {type: string, required: true}
+      document_type: {type: string, required: true}
+      status: {type: string, required: true}
+      effective_from: {type: date, required: true}
+      region: {type: string, required: true}
+      hospital_id: {type: string, required: false}
+      sensitivity: {type: string, required: true}
+      sha256: {type: string, required: true}
+
+  - source_id: rep_access_demo_only
+    source_file: rep_access_DEMO_ONLY.csv
+    target_table: rep_access_demo_only_raw
+    landing_subpath: rep_access_demo_only
+    keys: [principal_id, hospital_id]
+    columns:
+      principal_id: {type: string, required: true}
+      region: {type: string, required: true}
+      role: {type: string, required: true}
+      hospital_id: {type: string, required: true}

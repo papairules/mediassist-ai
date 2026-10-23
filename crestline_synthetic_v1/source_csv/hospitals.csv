@@ -1,0 +1,6 @@
+hospital_id,hospital_name,region,contract_id
+H-E101,Crestwood East Hospital,East,CTR-E101
+H-E102,Maple Shore Medical Center,East,CTR-E102
+H-W201,Sierra Valley Hospital,West,CTR-W201
+H-W202,Canyon Ridge Surgical Center,West,CTR-W202
+H-C301,Prairie Lake Community Hospital,Central,CTR-C301

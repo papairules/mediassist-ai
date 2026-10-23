@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+
+# Environment variables and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.databrickscfg
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Databricks deployment state
+.databricks/
+
+# Local IDE and system files
+.DS_Store
+.vscode/
+.idea/
+
+# Local logs
+*.log
+
+# Synthetic data (keep local for now)
