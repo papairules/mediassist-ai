@@ -1,0 +1,22 @@
+resources:
+  jobs:
+    silver_batch:
+      name: mediassist-silver-batch
+      description: Build typed, deduplicated, and validated Silver Delta tables.
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: build_silver_tables
+          environment_key: default
+          python_wheel_task:
+            package_name: mediassist_bronze
+            entry_point: run_silver_transform
+            named_parameters:
+              catalog: ${var.catalog}
+              bronze_schema: ${var.bronze_schema}
+              silver_schema: ${var.silver_schema}
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/mediassist_bronze-*.whl

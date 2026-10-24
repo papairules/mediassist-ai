@@ -1,0 +1,80 @@
+{
+  "description": "MediAssist AI synthetic healthcare distribution demo",
+  "compute_size": "MEDIUM",
+  "resources": [
+    {
+      "name": "sql-warehouse",
+      "description": "Read-only SQL execution",
+      "sql_warehouse": {
+        "id": "d249a9e5325ec021",
+        "permission": "CAN_USE"
+      }
+    },
+    {
+      "name": "vector-search-index",
+      "description": "Document evidence discovery",
+      "uc_securable": {
+        "securable_full_name": "workspace.crestline_silver.document_retrieval_chunks_index",
+        "securable_type": "TABLE",
+        "permission": "SELECT"
+      }
+    },
+    {
+      "name": "chat-endpoint",
+      "description": "Intent classification only",
+      "serving_endpoint": {
+        "name": "databricks-qwen3-next-80b-a3b-instruct",
+        "permission": "CAN_QUERY"
+      }
+    },
+    {
+      "name": "gold-order-visibility",
+      "uc_securable": {
+        "securable_full_name": "workspace.crestline_gold.order_line_fulfillment",
+        "securable_type": "TABLE",
+        "permission": "SELECT"
+      }
+    },
+    {
+      "name": "gold-backorder-eta",
+      "uc_securable": {
+        "securable_full_name": "workspace.crestline_gold.backorder_eta_evidence",
+        "securable_type": "TABLE",
+        "permission": "SELECT"
+      }
+    },
+    {
+      "name": "gold-region-inventory",
+      "uc_securable": {
+        "securable_full_name": "workspace.crestline_gold.product_region_inventory",
+        "securable_type": "TABLE",
+        "permission": "SELECT"
+      }
+    },
+    {
+      "name": "silver-contract-rules",
+      "uc_securable": {
+        "securable_full_name": "workspace.crestline_silver.contract_clauses",
+        "securable_type": "TABLE",
+        "permission": "SELECT"
+      }
+    },
+    {
+      "name": "silver-sub-guide",
+      "uc_securable": {
+        "securable_full_name": "workspace.crestline_silver.substitution_guide_rows",
+        "securable_type": "TABLE",
+        "permission": "SELECT"
+      }
+    },
+    {
+      "name": "silver-ifu-facts",
+      "uc_securable": {
+        "securable_full_name": "workspace.crestline_silver.ifu_product_facts",
+        "securable_type": "TABLE",
+        "permission": "SELECT"
+      }
+    }
+  ],
+  "name": "mediassist-ai"
+}

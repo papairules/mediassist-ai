@@ -1,0 +1,21 @@
+resources:
+  jobs:
+    document_retrieval_chunks:
+      name: mediassist-document-retrieval-chunks
+      description: Build the validated, CDF-enabled source table for future AI Search.
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: prepare_document_retrieval
+          environment_key: default
+          python_wheel_task:
+            package_name: mediassist_bronze
+            entry_point: prepare_document_retrieval
+            named_parameters:
+              catalog: ${var.catalog}
+              silver_schema: ${var.silver_schema}
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/mediassist_bronze-*.whl

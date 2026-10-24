@@ -5,6 +5,12 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+reports/
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
+.streamlit/
 
 # Environment variables and credentials
 .env

@@ -1,0 +1,26 @@
+resources:
+  jobs:
+    document_publication:
+      name: mediassist-document-publication
+      description: Validate and publish four citation-ready document Delta tables.
+      max_concurrent_runs: 1
+      parameters:
+        - name: artifact_set_id
+          default: ""
+      tasks:
+        - task_key: publish_document_tables
+          environment_key: default
+          python_wheel_task:
+            package_name: mediassist_bronze
+            entry_point: publish_document_tables
+            named_parameters:
+              artifact_root: ${var.document_artifact_root}
+              artifact_set_id: "{{job.parameters.artifact_set_id}}"
+              catalog: ${var.catalog}
+              silver_schema: ${var.silver_schema}
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/mediassist_bronze-*.whl

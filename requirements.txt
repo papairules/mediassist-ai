@@ -1,0 +1,2 @@
+# Databricks Apps installs this project as a regular (non-editable) package.
+.[ui]

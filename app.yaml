@@ -1,0 +1,17 @@
+command:
+  - streamlit
+  - run
+  - src/crestline_ui/app.py
+  - --server.address=0.0.0.0
+  - --server.port=8000
+env:
+  - name: PYTHONPATH
+    value: "src"
+  - name: MEDIASSIST_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+  - name: MEDIASSIST_VECTOR_INDEX
+    valueFrom: vector-search-index
+  - name: DATABRICKS_LLM_ENDPOINT
+    valueFrom: chat-endpoint
+  - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+    value: "false"

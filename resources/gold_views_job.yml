@@ -1,0 +1,22 @@
+resources:
+  jobs:
+    gold_views:
+      name: mediassist-gold-views
+      description: Publish the three deterministic MediAssist Gold SQL views.
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: publish_gold_views
+          environment_key: default
+          python_wheel_task:
+            package_name: mediassist_bronze
+            entry_point: run_gold_views
+            named_parameters:
+              catalog: ${var.catalog}
+              silver_schema: ${var.silver_schema}
+              gold_schema: ${var.gold_schema}
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/mediassist_bronze-*.whl

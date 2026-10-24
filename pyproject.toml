@@ -5,13 +5,30 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mediassist-bronze"
 version = "0.1.0"
-description = "Metadata-driven Bronze ingestion for the MediAssist AI project"
+description = "Metadata-driven Bronze, Silver, and Gold data engineering for MediAssist AI"
 requires-python = ">=3.10"
-dependencies = ["PyYAML>=6.0,<7"]
+dependencies = [
+  "PyYAML>=6.0,<7",
+  "pdfplumber>=0.11,<0.12",
+  "pypdfium2>=4.30,<5",
+]
 
 [project.optional-dependencies]
+retrieval = [
+  "databricks-sdk>=0.57,<1",
+]
+agent = [
+  "databricks-sdk>=0.57,<1",
+  "langgraph>=1.0,<2",
+]
+ui = [
+  "databricks-sdk>=0.57,<1",
+  "langgraph>=1.0,<2",
+  "streamlit>=1.37,<2",
+]
 dev = [
   "build>=1.2",
+  "langgraph>=1.0,<2",
   "mypy>=1.10",
   "pytest>=7.4",
 ]
@@ -19,12 +36,23 @@ dev = [
 [project.scripts]
 run_bronze_ingestion = "crestline_bronze.main:main"
 bootstrap_bronze_volume = "crestline_bronze.bootstrap:main"
+run_silver_transform = "crestline_silver.main:main"
+run_gold_views = "crestline_gold.main:main"
+extract_crestline_documents = "crestline_documents.main:main"
+prepare_document_publication = "crestline_documents.prepare_main:main"
+publish_document_tables = "crestline_documents.publish_main:main"
+prepare_document_retrieval = "crestline_documents.retrieval_main:main"
+mediassist_chat = "crestline_agent.cli:main"
+mediassist_evaluate = "crestline_eval.runner:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 crestline_bronze = ["sources.yml"]
+crestline_gold = ["sql/*.sql"]
+crestline_ui = ["styles.css"]
+crestline_eval = ["golden_scenarios.json"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
