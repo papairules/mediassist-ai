@@ -4,5 +4,8 @@
 # Python 3.12 environment. Databricks Apps may continue to resolve the
 # package extras through its own deployment environment.
 streamlit==1.37.1
+# Streamlit Community Cloud can retain an older base NumPy during dependency
+# reconciliation; require a current wheel compatible with Python 3.12/3.13.
+numpy>=2.0,<3
 databricks-sdk==0.156.0
 langgraph==1.2.16

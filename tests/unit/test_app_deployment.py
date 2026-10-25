@@ -198,7 +198,13 @@ def test_apps_requirements_installs_project_non_editably() -> None:
         for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
-    assert lines == [".[ui]", "streamlit==1.37.1", "databricks-sdk==0.156.0", "langgraph==1.2.16"]
+    assert lines == [
+        ".[ui]",
+        "streamlit==1.37.1",
+        "numpy>=2.0,<3",
+        "databricks-sdk==0.156.0",
+        "langgraph==1.2.16",
+    ]
     assert all(not line.startswith(("-e", "--editable")) for line in lines)
 
 
