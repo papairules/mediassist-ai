@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Any, Mapping, Protocol, Sequence
 
 from .models import SqlParameter
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class RetrievalBackendError(RuntimeError):
@@ -82,19 +87,32 @@ class DatabricksBackend:
             StatementState,
         )
 
-        response = self._workspace.statement_execution.execute_statement(
-            statement=statement,
-            warehouse_id=self._warehouse_id,
-            parameters=[
-                StatementParameterListItem(
-                    name=parameter.name,
-                    value=parameter.value,
-                    type=parameter.type,
-                )
-                for parameter in parameters
-            ],
-            wait_timeout="30s",
-            on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CANCEL,
+        started = time.monotonic()
+        LOGGER.info("sql_query_started parameters=%d", len(parameters))
+        try:
+            response = self._workspace.statement_execution.execute_statement(
+                statement=statement,
+                warehouse_id=self._warehouse_id,
+                parameters=[
+                    StatementParameterListItem(
+                        name=parameter.name,
+                        value=parameter.value,
+                        type=parameter.type,
+                    )
+                    for parameter in parameters
+                ],
+                wait_timeout="30s",
+                on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CANCEL,
+            )
+        except Exception:
+            LOGGER.exception(
+                "sql_query_failed elapsed_ms=%d",
+                int((time.monotonic() - started) * 1000),
+            )
+            raise
+        LOGGER.info(
+            "sql_query_response_received elapsed_ms=%d",
+            int((time.monotonic() - started) * 1000),
         )
         state = getattr(getattr(response, "status", None), "state", None)
         if state != StatementState.SUCCEEDED:
@@ -111,12 +129,25 @@ class DatabricksBackend:
         query_type: str,
         filters: Mapping[str, Any] | None = None,
     ) -> list[Mapping[str, Any]]:
-        response = self._workspace.vector_search_indexes.query_index(
-            index_name=index_name,
-            query_text=query_text,
-            columns=list(columns),
-            num_results=num_results,
-            query_type=query_type,
-            filters_json=(json.dumps(filters, sort_keys=True) if filters else None),
+        started = time.monotonic()
+        LOGGER.info("vector_query_started chars=%d", len(query_text))
+        try:
+            response = self._workspace.vector_search_indexes.query_index(
+                index_name=index_name,
+                query_text=query_text,
+                columns=list(columns),
+                num_results=num_results,
+                query_type=query_type,
+                filters_json=(json.dumps(filters, sort_keys=True) if filters else None),
+            )
+        except Exception:
+            LOGGER.exception(
+                "vector_query_failed elapsed_ms=%d",
+                int((time.monotonic() - started) * 1000),
+            )
+            raise
+        LOGGER.info(
+            "vector_query_response_received elapsed_ms=%d",
+            int((time.monotonic() - started) * 1000),
         )
         return _response_rows(response)

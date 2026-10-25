@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 from importlib import metadata
 import logging
+import os
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -20,6 +21,8 @@ DEFAULT_WAREHOUSE_ID,
 
 
 LOGGER = logging.getLogger(__name__)
+SDK_HTTP_TIMEOUT_SECONDS = 30.0
+SDK_RETRY_TIMEOUT_SECONDS = 45
 BUILD_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 STREAMLIT_SECRET_KEYS = frozenset(
     {
@@ -180,6 +183,11 @@ def create_workspace_client(
     """Create an SDK client using explicit hosted or local authentication."""
 
     from databricks.sdk import WorkspaceClient
+
+    # The SDK reads these standard settings when constructing its Config. Keep
+    # the bounds process-local and do not expose or log any credentials.
+    os.environ.setdefault("DATABRICKS_HTTP_TIMEOUT_SECONDS", str(SDK_HTTP_TIMEOUT_SECONDS))
+    os.environ.setdefault("DATABRICKS_RETRY_TIMEOUT_SECONDS", str(SDK_RETRY_TIMEOUT_SECONDS))
 
     if host and client_id and client_secret:
         return WorkspaceClient(

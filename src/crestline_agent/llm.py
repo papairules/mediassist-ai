@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import logging
+import time
 from typing import Any, Mapping, Protocol
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 ALLOWED_INTENTS = frozenset(
@@ -51,14 +56,27 @@ class DatabricksIntentClassifier:
             f"Safe prior references: {json.dumps(dict(safe_context), sort_keys=True)}\n"
             f"Request: {message}"
         )
-        response = self._workspace.serving_endpoints.query(
-            name=self._endpoint_name,
-            messages=[
-                ChatMessage(role=ChatMessageRole.SYSTEM, content="Return strict JSON only."),
-                ChatMessage(role=ChatMessageRole.USER, content=prompt),
-            ],
-            temperature=0.0,
-            max_tokens=200,
+        started = time.monotonic()
+        LOGGER.info("qwen_request_started")
+        try:
+            response = self._workspace.serving_endpoints.query(
+                name=self._endpoint_name,
+                messages=[
+                    ChatMessage(role=ChatMessageRole.SYSTEM, content="Return strict JSON only."),
+                    ChatMessage(role=ChatMessageRole.USER, content=prompt),
+                ],
+                temperature=0.0,
+                max_tokens=200,
+            )
+        except Exception:
+            LOGGER.exception(
+                "qwen_request_failed elapsed_ms=%d",
+                int((time.monotonic() - started) * 1000),
+            )
+            raise
+        LOGGER.info(
+            "qwen_response_received elapsed_ms=%d",
+            int((time.monotonic() - started) * 1000),
         )
         choices = getattr(response, "choices", None)
         if not choices:

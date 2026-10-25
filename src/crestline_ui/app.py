@@ -389,6 +389,8 @@ def _render_history() -> None:
 def _append_message(role: str, content: str, state: Any | None = None) -> None:
     target = st.session_state if state is None else state
     target["messages"].append({"role": role, "content": content})
+    if state is None:
+        LOGGER.info("message_saved role=%s count=%d", role, len(target["messages"]))
 
 
 def _invoke(
@@ -400,6 +402,7 @@ def _invoke(
     *,
     user_message_recorded: bool = False,
 ) -> None:
+    LOGGER.info("prompt_received chars=%d", len(prompt))
     prompt_error = _prompt_limit_message(prompt)
     if prompt_error:
         st.warning(prompt_error)
@@ -418,6 +421,8 @@ def _invoke(
         with st.spinner("Reviewing authoritative evidence…"):
             try:
                 authorization = build_demo_only_authorization(scope)
+                started = time.monotonic()
+                LOGGER.info("agent_invoked")
                 reply = st.session_state.agent.invoke(
                     prompt,
                     thread_id=st.session_state.thread_id,
@@ -427,12 +432,14 @@ def _invoke(
                     as_of=as_of,
                 )
                 response = reply.text
+                LOGGER.info(
+                    "response_received chars=%d elapsed_ms=%d",
+                    len(response),
+                    int((time.monotonic() - started) * 1000),
+                )
             except Exception:
                 LOGGER.exception("MediAssist request failed")
-                response = (
-                    "INSUFFICIENT_EVIDENCE: The evidence service is temporarily unavailable. "
-                    "No operational, contractual, or clinical conclusion was generated."
-                )
+                response = BACKEND_UNAVAILABLE_MESSAGE
             _assistant_message(response)
     _append_message("assistant", response)
 
@@ -448,6 +455,7 @@ def main() -> None:
     _load_css()
     runtime = load_runtime_config(os.environ, _streamlit_cloud_secrets())
     ready = runtime.ready
+    LOGGER.info("app_initialized ready=%s message_count=%d", ready, len(st.session_state.get("messages", [])))
 
     initial_scope = str(st.session_state.get("active_scope", "east"))
     if initial_scope not in DEMO_SCOPES:
@@ -477,7 +485,9 @@ def main() -> None:
     _append_message("user", submitted)
     with st.chat_message("user"):
         st.markdown(submitted)
+    LOGGER.info("prompt_received chars=%d", len(submitted))
     try:
+        LOGGER.info("backend_initialization_started")
         service, classifier = _retrieval_dependencies(
             runtime.profile,
             runtime.databricks_host,
@@ -487,6 +497,7 @@ def main() -> None:
             runtime.vector_index,
             runtime.llm_endpoint,
         )
+        LOGGER.info("backend_initialized")
     except Exception:
         LOGGER.exception("MediAssist configuration failed")
         with st.chat_message("assistant"):

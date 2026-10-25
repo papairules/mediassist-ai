@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import yaml  # type: ignore[import-untyped]
@@ -212,6 +213,26 @@ def test_workspace_client_omits_profile_for_managed_app_identity(
 
     assert "profile" not in calls[0]
     assert calls[1]["profile"] == "local-profile"
+
+
+def test_workspace_client_sets_bounded_sdk_timeouts(monkeypatch: MonkeyPatch) -> None:
+    import databricks.sdk
+
+    calls: list[dict[str, str]] = []
+
+    def fake_workspace_client(**kwargs: str) -> object:
+        calls.append(kwargs)
+        return object()
+
+    monkeypatch.delenv("DATABRICKS_HTTP_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("DATABRICKS_RETRY_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setattr(databricks.sdk, "WorkspaceClient", fake_workspace_client)
+
+    create_workspace_client(None)
+
+    assert calls
+    assert os.environ["DATABRICKS_HTTP_TIMEOUT_SECONDS"] == "30.0"
+    assert os.environ["DATABRICKS_RETRY_TIMEOUT_SECONDS"] == "45"
 
 
 def test_workspace_client_accepts_explicit_streamlit_oauth_configuration(
