@@ -48,6 +48,9 @@ OUTCOME_LABELS = {
 MAX_PROMPT_CHARS = 1200
 RATE_LIMIT_REQUESTS = 20
 RATE_LIMIT_WINDOW_SECONDS = 600.0
+BACKEND_UNAVAILABLE_MESSAGE = (
+    "Backend temporarily unavailable. Your question was preserved; please try again shortly."
+)
 
 
 @st.cache_resource(show_spinner=False)
@@ -156,7 +159,11 @@ def _header(ready: bool) -> None:
     )
 
 
-def _sidebar(scope: str, ready: bool) -> str:
+def _sidebar(
+    scope: str,
+    ready: bool,
+    missing_resources: tuple[str, ...] = (),
+) -> str:
     with st.sidebar:
         st.markdown("### MediAssist AI")
         st.caption("Evidence-grounded distribution intelligence")
@@ -188,6 +195,8 @@ def _sidebar(scope: str, ready: bool) -> str:
         st.caption(f"{len(st.session_state.messages)} messages")
         if not ready:
             st.warning("Configure the required Databricks resources to enable conversations.")
+            if missing_resources:
+                st.caption("Missing configuration: " + ", ".join(missing_resources))
         st.caption("Clinical and contractual decisions always require authoritative evidence and qualified review.")
     return selected
 
@@ -377,7 +386,20 @@ def _render_history() -> None:
                 st.markdown(str(message["content"]))
 
 
-def _invoke(prompt: str, scope: str, service: RetrievalService, classifier: DatabricksIntentClassifier, as_of: date) -> None:
+def _append_message(role: str, content: str, state: Any | None = None) -> None:
+    target = st.session_state if state is None else state
+    target["messages"].append({"role": role, "content": content})
+
+
+def _invoke(
+    prompt: str,
+    scope: str,
+    service: RetrievalService,
+    classifier: DatabricksIntentClassifier,
+    as_of: date,
+    *,
+    user_message_recorded: bool = False,
+) -> None:
     prompt_error = _prompt_limit_message(prompt)
     if prompt_error:
         st.warning(prompt_error)
@@ -388,9 +410,10 @@ def _invoke(prompt: str, scope: str, service: RetrievalService, classifier: Data
             "before trying again."
         )
         return
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    if not user_message_recorded:
+        _append_message("user", prompt)
+        with st.chat_message("user"):
+            st.markdown(prompt)
     with st.chat_message("assistant"):
         with st.spinner("Reviewing authoritative evidence…"):
             try:
@@ -411,7 +434,7 @@ def _invoke(prompt: str, scope: str, service: RetrievalService, classifier: Data
                     "No operational, contractual, or clinical conclusion was generated."
                 )
             _assistant_message(response)
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    _append_message("assistant", response)
 
 
 def main() -> None:
@@ -430,7 +453,7 @@ def main() -> None:
     if initial_scope not in DEMO_SCOPES:
         initial_scope = "east"
     _initialize_state(initial_scope)
-    selected_scope = _sidebar(initial_scope, ready)
+    selected_scope = _sidebar(initial_scope, ready, runtime.missing_resources)
     if selected_scope != st.session_state.active_scope:
         _new_conversation(selected_scope)
         st.rerun()
@@ -451,6 +474,9 @@ def main() -> None:
     submitted = action_prompt or prompt
     if not submitted or not ready:
         return
+    _append_message("user", submitted)
+    with st.chat_message("user"):
+        st.markdown(submitted)
     try:
         service, classifier = _retrieval_dependencies(
             runtime.profile,
@@ -463,9 +489,18 @@ def main() -> None:
         )
     except Exception:
         LOGGER.exception("MediAssist configuration failed")
-        st.error("Unable to initialize the configured Databricks resources and runtime identity.")
+        with st.chat_message("assistant"):
+            st.warning(BACKEND_UNAVAILABLE_MESSAGE)
+        _append_message("assistant", BACKEND_UNAVAILABLE_MESSAGE)
         return
-    _invoke(submitted, selected_scope, service, classifier, SYNTHETIC_AS_OF)
+    _invoke(
+        submitted,
+        selected_scope,
+        service,
+        classifier,
+        SYNTHETIC_AS_OF,
+        user_message_recorded=True,
+    )
 
 
 if __name__ == "__main__":

@@ -13,7 +13,14 @@ from crestline_agent.cli import (
     DEFAULT_WAREHOUSE_ID,
 )
 import crestline_agent.graph as agent_graph
-from crestline_ui.app import MAX_PROMPT_CHARS, RATE_LIMIT_REQUESTS, _allow_request, _prompt_limit_message
+from crestline_ui.app import (
+    BACKEND_UNAVAILABLE_MESSAGE,
+    MAX_PROMPT_CHARS,
+    RATE_LIMIT_REQUESTS,
+    _append_message,
+    _allow_request,
+    _prompt_limit_message,
+)
 from crestline_ui.runtime import (
     application_provenance,
     create_workspace_client,
@@ -145,6 +152,46 @@ def test_streamlit_cloud_without_oauth_secret_fails_closed() -> None:
     )
     assert not config.ready
     assert "OAuth client secret" in config.missing_resources
+
+
+def test_missing_hosted_configuration_reports_names_without_values() -> None:
+    config = load_runtime_config(
+        {},
+        {
+            "MEDIASSIST_HOSTED_MODE": "streamlit_cloud",
+            "DATABRICKS_HOST": "https://dbc-example.cloud.databricks.com",
+            "DATABRICKS_CLIENT_ID": "demo-client",
+        },
+    )
+
+    assert not config.ready
+    assert set(config.missing_resources) == {
+        "SQL warehouse",
+        "AI Search index",
+        "chat endpoint",
+        "OAuth client secret",
+    }
+    assert "demo-client" not in ", ".join(config.missing_resources)
+
+
+def test_initialization_failure_preserves_prompt_and_uses_backend_message() -> None:
+    state: dict[str, list[dict[str, str]]] = {"messages": []}
+
+    _append_message("user", "Where is ORD-1001?", state)
+    state["messages"].append({"role": "assistant", "content": BACKEND_UNAVAILABLE_MESSAGE})
+
+    assert state["messages"][0]["content"] == "Where is ORD-1001?"
+    assert "Backend temporarily unavailable" in state["messages"][1]["content"]
+    assert "INSUFFICIENT_EVIDENCE" not in state["messages"][1]["content"]
+
+
+def test_successful_submission_can_record_prompt_once() -> None:
+    state: dict[str, list[dict[str, str]]] = {"messages": []}
+    _append_message("user", "Where is ORD-1001?", state)
+    state["messages"].append({"role": "assistant", "content": "ORD-1001 evidence"})
+
+    assert [message["role"] for message in state["messages"]] == ["user", "assistant"]
+    assert state["messages"][0]["content"] == "Where is ORD-1001?"
 
 
 def test_workspace_client_omits_profile_for_managed_app_identity(
