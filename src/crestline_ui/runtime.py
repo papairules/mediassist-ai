@@ -126,11 +126,7 @@ class AppRuntimeConfig:
 
 
 def streamlit_secret_environment(secrets: Mapping[str, Any]) -> dict[str, str]:
-    """Copy only known, non-authorization settings from Streamlit secrets.
-
-    The OAuth secret is intentionally returned only for in-process SDK setup;
-    it is never logged or displayed. Unknown secret keys are ignored.
-    """
+    """Read allow-listed settings; OAuth stays in-process and unknown keys are ignored."""
 
     return {
         key: str(secrets[key]).strip()
@@ -184,8 +180,7 @@ def create_workspace_client(
 
     from databricks.sdk import WorkspaceClient
 
-    # The SDK reads these standard settings when constructing its Config. Keep
-    # the bounds process-local and do not expose or log any credentials.
+    # Keep SDK bounds process-local; never expose or log credentials.
     os.environ.setdefault("DATABRICKS_HTTP_TIMEOUT_SECONDS", str(SDK_HTTP_TIMEOUT_SECONDS))
     os.environ.setdefault("DATABRICKS_RETRY_TIMEOUT_SECONDS", str(SDK_RETRY_TIMEOUT_SECONDS))
 

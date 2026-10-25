@@ -91,7 +91,7 @@ def _safe_source_path(dataset_root: Path, relative_path: str) -> Path:
 
 
 def load_and_reconcile_manifest(manifest_path: Path, pdf_directory: Path) -> list[ManifestDocument]:
-    """Validate the manifest, every local PDF, and every declared SHA-256."""
+    """Validate the manifest, PDFs, and declared SHA-256 values."""
     dataset_root = manifest_path.resolve().parent.parent
     pdf_root = pdf_directory.resolve()
     documents: list[ManifestDocument] = []
@@ -447,7 +447,7 @@ def extract_documents(
     pdf_directory: Path,
     ocr: OcrFunction | None = None,
 ) -> ExtractionResult:
-    """Extract all registered documents; absent OCR produces review evidence, not facts."""
+    """Extract registered documents; unavailable OCR yields review evidence, never facts."""
     documents = load_and_reconcile_manifest(manifest_path, pdf_directory)
     pages: list[dict[str, Any]] = []
     guide_rows: list[dict[str, Any]] = []

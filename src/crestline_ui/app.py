@@ -64,7 +64,7 @@ def _load_css() -> None:
 
 
 def _streamlit_cloud_secrets() -> dict[str, str]:
-    """Read only the allow-listed Community Cloud settings."""
+    """Read allow-listed Community Cloud settings."""
 
     try:
         return streamlit_secret_environment(st.secrets)
@@ -96,11 +96,7 @@ def _retrieval_dependencies(
 
 
 def _allow_request(state: Any, now: float | None = None) -> bool:
-    """Apply a per-Streamlit-session request window.
-
-    This limits accidental or single-session abuse. It cannot enforce a global
-    anonymous-user quota because separate browser sessions have separate state.
-    """
+    """Limit requests per Streamlit session, not a global anonymous-user quota."""
 
     current = time.monotonic() if now is None else now
     timestamps = [

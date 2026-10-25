@@ -44,12 +44,7 @@ class EvaluationConfigurationError(ValueError):
 
 
 def _semantic_fact_equal(actual: Any, expected: Any) -> bool:
-    """Compare a fact while tolerating SQL transport stringification of numbers.
-
-    Databricks Statement Execution may return numeric scalar values as strings.
-    Numeric coercion is deliberately enabled only when the golden expectation
-    is numeric; all other facts retain strict equality semantics.
-    """
+    """Compare facts with numeric coercion only for numeric expectations."""
 
     expected_is_numeric = isinstance(expected, (int, float, Decimal)) and not isinstance(
         expected, bool

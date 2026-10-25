@@ -427,9 +427,9 @@ through Databricks Apps grants the parent privileges when the deploying user
 has sufficient `MANAGE` rights. The deployer therefore needs `CAN MANAGE` on
 the app, warehouse, and serving endpoint, plus `MANAGE` (or equivalent grant
 authority) on the catalog, schemas, views/tables, and AI Search index. No
-`MODIFY`, job-run, Volume-write, or infrastructure-creation permission is
-required. If the AI Search index uses a separately permissioned custom or
-route-optimized query embedding endpoint, also grant the app service principal
+data-plane `MODIFY`, job-run, Volume-write, or infrastructure-creation
+permission is required. If the AI Search index uses a separately permissioned
+custom or route-optimized query embedding endpoint, also grant the app service principal
 `CAN QUERY` on that endpoint; the existing managed embedding configuration
 should be confirmed once in the workspace.
 
