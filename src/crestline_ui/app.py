@@ -7,6 +7,7 @@ import html
 from importlib.resources import files
 import logging
 import os
+import time
 from typing import Any
 import uuid
 
@@ -23,6 +24,7 @@ from crestline_ui.runtime import (
     create_workspace_client,
     load_runtime_config,
     log_application_provenance,
+    streamlit_secret_environment,
 )
 
 
@@ -40,9 +42,12 @@ ACTION_PROMPTS = {
 OUTCOME_LABELS = {
     "BLOCKED": ("Blocked", "blocked"),
     "INSUFFICIENT_EVIDENCE": ("Insufficient evidence", "insufficient"),
-    "ELIGIBLE_FOR_HUMAN_REVIEW": ("Eligible for human review — not approved", "review"),
+    "ELIGIBLE_FOR_HUMAN_REVIEW": ("Conditionally eligible — human review required", "review"),
     "ACCESS_DENIED": ("Access denied", "denied"),
 }
+MAX_PROMPT_CHARS = 1200
+RATE_LIMIT_REQUESTS = 20
+RATE_LIMIT_WINDOW_SECONDS = 600.0
 
 
 @st.cache_resource(show_spinner=False)
@@ -55,19 +60,66 @@ def _load_css() -> None:
     st.markdown(f"<style>{stylesheet}</style>", unsafe_allow_html=True)
 
 
+def _streamlit_cloud_secrets() -> dict[str, str]:
+    """Read only the allow-listed Community Cloud settings."""
+
+    try:
+        return streamlit_secret_environment(st.secrets)
+    except (FileNotFoundError, KeyError):
+        return {}
+
+
 @st.cache_resource(show_spinner=False)
 def _retrieval_dependencies(
     profile: str | None,
+    databricks_host: str | None,
+    client_id: str | None,
+    client_secret: str | None,
     warehouse_id: str,
     vector_index: str,
     llm_endpoint: str,
 ) -> tuple[RetrievalService, DatabricksIntentClassifier]:
-    workspace = create_workspace_client(profile)
+    workspace = create_workspace_client(
+        profile,
+        host=databricks_host,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
     service = RetrievalService(
         DatabricksBackend(workspace, warehouse_id),
         vector_index=vector_index,
     )
     return service, DatabricksIntentClassifier(workspace, llm_endpoint)
+
+
+def _allow_request(state: Any, now: float | None = None) -> bool:
+    """Apply a per-Streamlit-session request window.
+
+    This limits accidental or single-session abuse. It cannot enforce a global
+    anonymous-user quota because separate browser sessions have separate state.
+    """
+
+    current = time.monotonic() if now is None else now
+    timestamps = [
+        float(value)
+        for value in state.get("mediassist_request_timestamps", [])
+        if current - float(value) < RATE_LIMIT_WINDOW_SECONDS
+    ]
+    if len(timestamps) >= RATE_LIMIT_REQUESTS:
+        state["mediassist_request_timestamps"] = timestamps
+        return False
+    timestamps.append(current)
+    state["mediassist_request_timestamps"] = timestamps
+    return True
+
+
+def _prompt_limit_message(prompt: str) -> str | None:
+    if len(prompt) > MAX_PROMPT_CHARS:
+        return (
+            f"Please shorten your request to {MAX_PROMPT_CHARS} characters or fewer. "
+            "No Databricks or model request was made."
+        )
+    return None
 
 
 def _new_conversation(scope: str) -> None:
@@ -276,15 +328,19 @@ def _assistant_message(text: str) -> None:
     view = parse_response(text)
     if view.candidate_outcomes:
         st.markdown(
-            f'<div class="ma-discovery-summary">{html.escape(view.candidate_summary or "Alternatives evaluated")}</div>',
+            f'<div class="ma-discovery-summary">{html.escape(view.candidate_headline or "Alternatives evaluated")}</div>',
             unsafe_allow_html=True,
         )
+        if view.candidate_summary and view.candidate_summary != view.candidate_headline:
+            st.caption(view.candidate_summary)
         st.caption(
             "Semantic search discovered exact candidate pairs; deterministic verification produced each outcome. No candidate is clinically approved."
         )
         _candidate_outcome_cards(view)
         evidence_count = sum(len(candidate.citations) for candidate in view.candidate_outcomes)
-        with st.expander(f"Evidence & Sources · {evidence_count}", expanded=False):
+        with st.expander(f"View supporting evidence · {evidence_count}", expanded=False):
+            if view.supporting_text:
+                st.markdown(view.supporting_text)
             for candidate in view.candidate_outcomes:
                 st.markdown(f"**{candidate.sku} · {candidate.outcome}**")
                 if candidate.reason_codes:
@@ -298,10 +354,15 @@ def _assistant_message(text: str) -> None:
             f'<div class="ma-outcome {css_class}" role="status">{html.escape(label)}</div>',
             unsafe_allow_html=True,
         )
+    if view.summary_text:
+        st.markdown(f"### {html.escape(view.summary_text)}")
+    if view.brief_explanation:
+        st.markdown(html.escape(view.brief_explanation))
     _metric_cards(view)
-    st.markdown(view.display_text)
-    if view.citations:
-        with st.expander(f"Evidence & Sources · {len(view.citations)}", expanded=False):
+    if view.supporting_text or view.citations:
+        with st.expander(f"View supporting evidence · {len(view.citations)}", expanded=False):
+            if view.supporting_text:
+                st.markdown(view.supporting_text)
             for citation in view.citations:
                 _source_card(citation)
 
@@ -317,6 +378,16 @@ def _render_history() -> None:
 
 
 def _invoke(prompt: str, scope: str, service: RetrievalService, classifier: DatabricksIntentClassifier, as_of: date) -> None:
+    prompt_error = _prompt_limit_message(prompt)
+    if prompt_error:
+        st.warning(prompt_error)
+        return
+    if not _allow_request(st.session_state):
+        st.warning(
+            "This demo session has reached its request limit. Please wait a few minutes "
+            "before trying again."
+        )
+        return
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -352,7 +423,7 @@ def main() -> None:
     )
     _log_startup_provenance()
     _load_css()
-    runtime = load_runtime_config(os.environ)
+    runtime = load_runtime_config(os.environ, _streamlit_cloud_secrets())
     ready = runtime.ready
 
     initial_scope = str(st.session_state.get("active_scope", "east"))
@@ -383,6 +454,9 @@ def main() -> None:
     try:
         service, classifier = _retrieval_dependencies(
             runtime.profile,
+            runtime.databricks_host,
+            runtime.client_id,
+            runtime.client_secret,
             runtime.warehouse_id,
             runtime.vector_index,
             runtime.llm_endpoint,

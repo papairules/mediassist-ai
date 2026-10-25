@@ -1,4 +1,4 @@
-"""Runtime configuration for local Streamlit and Databricks Apps."""
+"""Runtime configuration for local, Databricks Apps, and hosted Streamlit."""
 
 from __future__ import annotations
 
@@ -15,12 +15,24 @@ import crestline_agent.graph as agent_graph
 from crestline_agent.cli import (
     DEFAULT_PROFILE,
     DEFAULT_VECTOR_INDEX,
-    DEFAULT_WAREHOUSE_ID,
+DEFAULT_WAREHOUSE_ID,
 )
 
 
 LOGGER = logging.getLogger(__name__)
 BUILD_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+STREAMLIT_SECRET_KEYS = frozenset(
+    {
+        "MEDIASSIST_HOSTED_MODE",
+        "DATABRICKS_HOST",
+        "DATABRICKS_CLIENT_ID",
+        "DATABRICKS_CLIENT_SECRET",
+        "MEDIASSIST_WAREHOUSE_ID",
+        "MEDIASSIST_VECTOR_INDEX",
+        "DATABRICKS_LLM_ENDPOINT",
+        "MEDIASSIST_BUILD_ID",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -83,6 +95,10 @@ class AppRuntimeConfig:
     vector_index: str
     llm_endpoint: str
     is_databricks_app: bool
+    is_streamlit_cloud: bool
+    databricks_host: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
 
     @property
     def missing_resources(self) -> tuple[str, ...]:
@@ -91,6 +107,14 @@ class AppRuntimeConfig:
             "AI Search index": self.vector_index,
             "chat endpoint": self.llm_endpoint,
         }
+        if self.is_streamlit_cloud:
+            values.update(
+                {
+                    "Databricks host": self.databricks_host or "",
+                    "OAuth client ID": self.client_id or "",
+                    "OAuth client secret": self.client_secret or "",
+                }
+            )
         return tuple(label for label, value in values.items() if not value)
 
     @property
@@ -98,7 +122,24 @@ class AppRuntimeConfig:
         return not self.missing_resources
 
 
-def load_runtime_config(environ: Mapping[str, str]) -> AppRuntimeConfig:
+def streamlit_secret_environment(secrets: Mapping[str, Any]) -> dict[str, str]:
+    """Copy only known, non-authorization settings from Streamlit secrets.
+
+    The OAuth secret is intentionally returned only for in-process SDK setup;
+    it is never logged or displayed. Unknown secret keys are ignored.
+    """
+
+    return {
+        key: str(secrets[key]).strip()
+        for key in STREAMLIT_SECRET_KEYS
+        if key in secrets and str(secrets[key]).strip()
+    }
+
+
+def load_runtime_config(
+    environ: Mapping[str, str],
+    secrets: Mapping[str, Any] | None = None,
+) -> AppRuntimeConfig:
     """Resolve managed App resources or retain the established local defaults.
 
     Databricks Apps injects a client ID and secret for its dedicated service
@@ -106,26 +147,48 @@ def load_runtime_config(environ: Mapping[str, str]) -> AppRuntimeConfig:
     passed to the SDK and all managed resource bindings are required.
     """
 
-    is_databricks_app = bool(environ.get("DATABRICKS_CLIENT_ID"))
-    profile = None if is_databricks_app else environ.get(
+    merged = dict(environ)
+    if secrets is not None:
+        merged.update(streamlit_secret_environment(secrets))
+    is_streamlit_cloud = merged.get("MEDIASSIST_HOSTED_MODE", "").lower() == "streamlit_cloud"
+    is_databricks_app = bool(merged.get("DATABRICKS_CLIENT_ID")) and not is_streamlit_cloud
+    profile = None if is_databricks_app or is_streamlit_cloud else merged.get(
         "DATABRICKS_CONFIG_PROFILE", DEFAULT_PROFILE
     )
-    local_warehouse_default = "" if is_databricks_app else DEFAULT_WAREHOUSE_ID
-    local_index_default = "" if is_databricks_app else DEFAULT_VECTOR_INDEX
+    local_warehouse_default = "" if is_databricks_app or is_streamlit_cloud else DEFAULT_WAREHOUSE_ID
+    local_index_default = "" if is_databricks_app or is_streamlit_cloud else DEFAULT_VECTOR_INDEX
     return AppRuntimeConfig(
         profile=profile,
-        warehouse_id=environ.get("MEDIASSIST_WAREHOUSE_ID", local_warehouse_default).strip(),
-        vector_index=environ.get("MEDIASSIST_VECTOR_INDEX", local_index_default).strip(),
-        llm_endpoint=environ.get("DATABRICKS_LLM_ENDPOINT", "").strip(),
+        warehouse_id=merged.get("MEDIASSIST_WAREHOUSE_ID", local_warehouse_default).strip(),
+        vector_index=merged.get("MEDIASSIST_VECTOR_INDEX", local_index_default).strip(),
+        llm_endpoint=merged.get("DATABRICKS_LLM_ENDPOINT", "").strip(),
         is_databricks_app=is_databricks_app,
+        is_streamlit_cloud=is_streamlit_cloud,
+        databricks_host=merged.get("DATABRICKS_HOST", "").strip() or None,
+        client_id=merged.get("DATABRICKS_CLIENT_ID", "").strip() or None,
+        client_secret=merged.get("DATABRICKS_CLIENT_SECRET", "").strip() or None,
     )
 
 
-def create_workspace_client(profile: str | None) -> Any:
-    """Create an SDK client using managed auth unless a local profile is explicit."""
+def create_workspace_client(
+    profile: str | None,
+    *,
+    host: str | None = None,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+) -> Any:
+    """Create an SDK client using explicit hosted or local authentication."""
 
     from databricks.sdk import WorkspaceClient
 
+    if host and client_id and client_secret:
+        return WorkspaceClient(
+            host=host,
+            client_id=client_id,
+            client_secret=client_secret,
+            product="mediassist-streamlit",
+            product_version="0.1.0",
+        )
     if profile is None:
         return WorkspaceClient(
             product="mediassist-streamlit",

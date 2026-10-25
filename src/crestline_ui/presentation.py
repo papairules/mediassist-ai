@@ -97,6 +97,9 @@ class ResponseView:
     metrics: tuple[Metric, ...]
     citations: tuple[Citation, ...]
     candidate_outcomes: tuple[CandidateOutcome, ...] = ()
+    summary_text: str = ""
+    brief_explanation: str = ""
+    supporting_text: str = ""
 
     @property
     def candidate_summary(self) -> str | None:
@@ -127,6 +130,18 @@ class ResponseView:
             f"{len(self.candidate_outcomes)} alternatives evaluated: "
             f"{review_text}, {blocked} blocked, {insufficient_text}"
         )
+
+    @property
+    def candidate_headline(self) -> str | None:
+        """Concise decision headline for candidate discovery."""
+        if not self.candidate_outcomes:
+            return None
+        outcomes = {candidate.outcome for candidate in self.candidate_outcomes}
+        if outcomes == {"BLOCKED"}:
+            return "No — no eligible alternatives currently identified."
+        if "ELIGIBLE_FOR_HUMAN_REVIEW" in outcomes:
+            return "Conditionally eligible — human review required."
+        return "Insufficient evidence — no candidate is currently eligible."
 
 
 def _key_values(raw: str) -> tuple[tuple[str, str], ...]:
@@ -286,6 +301,103 @@ def _metrics(text: str, *, include_substitution_inventory: bool = True) -> tuple
     return tuple(metrics)
 
 
+def _brief_substitution(outcome: str, text: str) -> tuple[str, str]:
+    pair = re.search(
+        r"Evaluated pair:\s*requested=(?P<requested>[^;]+);\s*candidate=(?P<candidate>[^.]+)",
+        text,
+    )
+    pair_text = ""
+    if pair:
+        pair_text = (
+            f"Requested {pair.group('requested').strip()}; "
+            f"candidate {pair.group('candidate').strip()}."
+        )
+    reasons = _human_reasons(_reason_codes(text))
+    reason = reasons[0] if reasons else "The deterministic checks did not provide further detail."
+    if outcome == "BLOCKED":
+        return "No — this substitution is blocked.", " ".join((pair_text, reason)).strip()
+    if outcome == "ELIGIBLE_FOR_HUMAN_REVIEW":
+        return (
+            "Conditionally eligible — human review required.",
+            " ".join((pair_text, "Not approved. Qualified clinical review is required.")).strip(),
+        )
+    if outcome == "ACCESS_DENIED":
+        return "Access denied.", "The requested evidence is outside the trusted authorization scope."
+    return (
+        "Insufficient evidence.",
+        " ".join((pair_text, reason, "No substitution approval can be inferred.")).strip(),
+    )
+
+
+def _operational_summary(text: str, metrics: tuple[Metric, ...]) -> tuple[str, str]:
+    order = re.search(
+        r"(?P<order>ORD-\d+)\s+line\s+(?P<line>\d+).*?state=(?P<state>[\w-]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if order:
+        ordered = next((metric.value for metric in metrics if metric.label == "Ordered"), None)
+        unshipped = next((metric.value for metric in metrics if metric.label == "Unshipped"), None)
+        state = order.group("state").replace("_", " ")
+        explanation = f"{ordered} units ordered; {unshipped} remain unshipped." if ordered and unshipped else "See the fulfillment metrics for the reported quantities."
+        return (
+            f"{order.group('order')} line {order.group('line')}: {state.title()}.",
+            explanation,
+        )
+    supplier = re.search(r"latest supplier restock estimate=(?P<date>[^;\n]+)", text)
+    if supplier:
+        return (
+            f"Supplier restock estimate: {supplier.group('date').strip()}.",
+            "This is not a confirmed hospital delivery date.",
+        )
+    if "supplier restock date unknown" in text.lower():
+        return (
+            "Supplier restock estimate: unknown.",
+            "No supplier restock date is available, so a hospital delivery date cannot be confirmed.",
+        )
+    inventory = re.search(r"observed available quantity=(?P<count>-?\d+)", text)
+    if inventory:
+        return (
+            f"Observed inventory: {inventory.group('count')} units.",
+            "This is an observed regional snapshot, not a reservation or substitution approval.",
+        )
+    if "no current inventory observation" in text.lower():
+        return (
+            "Inventory observation unavailable.",
+            "No current regional observation was found; availability remains unknown.",
+        )
+    if text.startswith("CLARIFICATION_REQUIRED"):
+        detail = text.split(":", 1)[1].strip() if ":" in text else "Please provide the missing detail."
+        return "Please clarify.", detail
+    if text.startswith("INSUFFICIENT_EVIDENCE"):
+        return "Insufficient evidence.", text.split(".", 1)[1].strip() if "." in text else "Required evidence is missing."
+    if text.startswith("ACCESS_DENIED"):
+        return "Access denied.", text.split(":", 1)[1].strip() if ":" in text else "The requested evidence is outside the trusted scope."
+    if text.startswith("Semantic discovery only"):
+        return "Document evidence found.", "Semantic matches are discovery only and are not approval evidence."
+    return "Evidence retrieved.", "Review the supporting evidence for the complete source details."
+
+
+def _supporting_lines(text: str) -> str:
+    prefixes = (
+        "Evaluated pair:",
+        "Reasons:",
+        "Guide:",
+        "IFU:",
+        "Contract evidence",
+        "Applicable amendment",
+        "Inventory:",
+        "Backorder:",
+        "Discovery source only",
+    )
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = " ".join(CITATION_PATTERN.sub("", raw_line).split())
+        if line and line.startswith(prefixes):
+            lines.append(line)
+    return "\n\n".join(lines)
+
+
 def parse_response(text: str) -> ResponseView:
     """Extract visual metadata without changing the agent's authoritative text."""
     outcome = next((candidate for candidate in OUTCOMES if text.startswith(candidate)), None)
@@ -296,11 +408,22 @@ def parse_response(text: str) -> ResponseView:
         normalized = " ".join(line.split())
         if normalized:
             clean_lines.append(normalized)
+    metrics = _metrics(text, include_substitution_inventory=not candidate_outcomes)
+    if candidate_outcomes:
+        summary_text = ""
+        brief_explanation = "Semantic discovery identified exact SKU pairs; each outcome was checked deterministically. No candidate is clinically approved."
+    elif outcome in {"BLOCKED", "ELIGIBLE_FOR_HUMAN_REVIEW", "INSUFFICIENT_EVIDENCE", "ACCESS_DENIED"}:
+        summary_text, brief_explanation = _brief_substitution(outcome, text)
+    else:
+        summary_text, brief_explanation = _operational_summary(text, metrics)
     return ResponseView(
         text=text,
         display_text="\n\n".join(clean_lines),
         outcome=outcome,
-        metrics=_metrics(text, include_substitution_inventory=not candidate_outcomes),
+        metrics=metrics,
         citations=citations,
         candidate_outcomes=candidate_outcomes,
+        summary_text=summary_text,
+        brief_explanation=brief_explanation,
+        supporting_text=_supporting_lines(text),
     )

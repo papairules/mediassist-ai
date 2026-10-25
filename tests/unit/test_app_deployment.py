@@ -13,11 +13,13 @@ from crestline_agent.cli import (
     DEFAULT_WAREHOUSE_ID,
 )
 import crestline_agent.graph as agent_graph
+from crestline_ui.app import MAX_PROMPT_CHARS, RATE_LIMIT_REQUESTS, _allow_request, _prompt_limit_message
 from crestline_ui.runtime import (
     application_provenance,
     create_workspace_client,
     load_runtime_config,
     log_application_provenance,
+    streamlit_secret_environment,
 )
 
 
@@ -101,6 +103,48 @@ def test_local_runtime_preserves_existing_profile_and_resource_defaults() -> Non
     assert config.profile == DEFAULT_PROFILE
     assert config.warehouse_id == DEFAULT_WAREHOUSE_ID
     assert config.vector_index == DEFAULT_VECTOR_INDEX
+    assert not config.is_streamlit_cloud
+
+
+def test_streamlit_cloud_secrets_use_explicit_oauth_and_never_local_profile() -> None:
+    secrets = {
+        "MEDIASSIST_HOSTED_MODE": "streamlit_cloud",
+        "DATABRICKS_HOST": "https://dbc-example.cloud.databricks.com",
+        "DATABRICKS_CLIENT_ID": "demo-client",
+        "DATABRICKS_CLIENT_SECRET": "demo-secret",
+        "MEDIASSIST_WAREHOUSE_ID": "warehouse",
+        "MEDIASSIST_VECTOR_INDEX": "catalog.schema.index",
+        "DATABRICKS_LLM_ENDPOINT": "endpoint",
+        "UNRELATED_SECRET": "ignored",
+    }
+    config = load_runtime_config(
+        {"DATABRICKS_CONFIG_PROFILE": "must-not-be-used"},
+        secrets,
+    )
+
+    assert config.is_streamlit_cloud
+    assert config.profile is None
+    assert config.ready
+    assert config.databricks_host == secrets["DATABRICKS_HOST"]
+    assert config.client_id == secrets["DATABRICKS_CLIENT_ID"]
+    assert config.client_secret == secrets["DATABRICKS_CLIENT_SECRET"]
+    assert "UNRELATED_SECRET" not in streamlit_secret_environment(secrets)
+
+
+def test_streamlit_cloud_without_oauth_secret_fails_closed() -> None:
+    config = load_runtime_config(
+        {},
+        {
+            "MEDIASSIST_HOSTED_MODE": "streamlit_cloud",
+            "DATABRICKS_HOST": "https://dbc-example.cloud.databricks.com",
+            "DATABRICKS_CLIENT_ID": "demo-client",
+            "MEDIASSIST_WAREHOUSE_ID": "warehouse",
+            "MEDIASSIST_VECTOR_INDEX": "catalog.schema.index",
+            "DATABRICKS_LLM_ENDPOINT": "endpoint",
+        },
+    )
+    assert not config.ready
+    assert "OAuth client secret" in config.missing_resources
 
 
 def test_workspace_client_omits_profile_for_managed_app_identity(
@@ -123,13 +167,38 @@ def test_workspace_client_omits_profile_for_managed_app_identity(
     assert calls[1]["profile"] == "local-profile"
 
 
+def test_workspace_client_accepts_explicit_streamlit_oauth_configuration(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    import databricks.sdk
+
+    calls: list[dict[str, str]] = []
+
+    def fake_workspace_client(**kwargs: str) -> object:
+        calls.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(databricks.sdk, "WorkspaceClient", fake_workspace_client)
+    create_workspace_client(
+        None,
+        host="https://dbc-example.cloud.databricks.com",
+        client_id="demo-client",
+        client_secret="demo-secret",
+    )
+
+    assert calls[0]["host"] == "https://dbc-example.cloud.databricks.com"
+    assert calls[0]["client_id"] == "demo-client"
+    assert calls[0]["client_secret"] == "demo-secret"
+    assert "profile" not in calls[0]
+
+
 def test_apps_requirements_installs_project_non_editably() -> None:
     lines = [
         line.strip()
         for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
-    assert lines == [".[ui]"]
+    assert lines == [".[ui]", "streamlit==1.37.1", "databricks-sdk==0.156.0", "langgraph==1.2.16"]
     assert all(not line.startswith(("-e", "--editable")) for line in lines)
 
 
@@ -161,3 +230,18 @@ def test_startup_provenance_log_contains_only_code_identifiers(
     assert provenance.package_version in message
     assert provenance.build_id in message
     assert "must-not-appear" not in message
+
+
+def test_prompt_size_limit_rejects_oversized_requests_without_calling_services() -> None:
+    assert _prompt_limit_message("x" * MAX_PROMPT_CHARS) is None
+    message = _prompt_limit_message("x" * (MAX_PROMPT_CHARS + 1))
+    assert message is not None
+    assert "No Databricks or model request was made" in message
+
+
+def test_request_limit_is_scoped_to_one_session_window() -> None:
+    state: dict[str, list[float]] = {}
+    for index in range(RATE_LIMIT_REQUESTS):
+        assert _allow_request(state, float(index))
+    assert not _allow_request(state, float(RATE_LIMIT_REQUESTS))
+    assert _allow_request(state, 601.0)

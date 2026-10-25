@@ -493,6 +493,9 @@ databricks apps deploy mediassist-ai \
 
 ## Golden conversational evaluation
 
+For a temporary public, synthetic-data-only mirror on Streamlit Community
+Cloud, see [the Community Cloud deployment guide](docs/deployment/streamlit_community_cloud.md).
+
 The packaged `crestline_eval/golden_scenarios.json` is the canonical,
 version-controlled demonstration suite. It covers order quantities, the
 supplier-restock-versus-delivery distinction, multi-turn candidate discovery,

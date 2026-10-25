@@ -78,6 +78,7 @@ def test_discovered_candidate_outcomes_remain_independent() -> None:
         "3 alternatives evaluated: 1 requires clinical review, 1 blocked, "
         "1 has insufficient evidence"
     )
+    assert view.candidate_headline == "Conditionally eligible — human review required."
 
 
 def test_all_blocked_candidates_have_concise_summary_and_scoped_inventory() -> None:
@@ -93,6 +94,7 @@ def test_all_blocked_candidates_have_concise_summary_and_scoped_inventory() -> N
         "Inventory: observed=True, available=17; product_record=product-pnk."
     )
     assert view.candidate_summary == "No eligible alternatives currently identified"
+    assert view.candidate_headline == "No — no eligible alternatives currently identified."
     assert view.metrics == ()
     assert [candidate.inventory_available for candidate in view.candidate_outcomes] == ["45", "17"]
     assert [candidate.inventory_observed for candidate in view.candidate_outcomes] == [True, True]
@@ -148,3 +150,54 @@ def test_candidate_evidence_stays_attached_to_its_candidate() -> None:
     assert eligible.citations[0].record_id == "approved-row"
     assert blocked.inventory_available == "0"
     assert blocked.citations[0].record_id == "rejected-row"
+
+
+def test_concise_blocked_substitution_keeps_full_evidence_available() -> None:
+    view = parse_response(
+        "BLOCKED. The candidate must not be presented as eligible.\n"
+        "Evaluated pair: requested=AV-IV22-BLU-LF; candidate=BR-IV22-BLU-LX.\n"
+        "Reasons: current_guide_status_blocks_candidate, ifu_attributes_do_not_match.\n"
+        "Guide: status=REJECTED [SUB_GUIDE_2026_V2_CURRENT version=V2 status=current p.1; "
+        "record=guide-row; sha256=guide-hash]\n"
+        "IFU: product=BR-IV22-BLU-LX [IFU_BR_IV22_LX version=2026 status=current p.1; "
+        "record=ifu-row; sha256=ifu-hash]\n"
+        "Inventory: observed=True, available=0; product_record=product-row."
+    )
+    assert view.summary_text == "No — this substitution is blocked."
+    assert "Requested AV-IV22-BLU-LF; candidate BR-IV22-BLU-LX." in view.brief_explanation
+    assert "Current guide status blocks this candidate." in view.brief_explanation
+    assert "Guide: status=REJECTED" in view.supporting_text
+    assert "IFU: product=BR-IV22-BLU-LX" in view.supporting_text
+    assert "Inventory: observed=True, available=0" in view.supporting_text
+    assert view.citations[0].document_id == "SUB_GUIDE_2026_V2_CURRENT"
+
+
+def test_conditional_eligibility_is_never_rendered_as_approval() -> None:
+    view = parse_response(
+        "ELIGIBLE_FOR_HUMAN_REVIEW—not approved. All deterministic preconditions passed.\n"
+        "Evaluated pair: requested=AV-IV22-BLU-LF; candidate=BR-IV22-BLU-LF.\n"
+        "Reasons: all_deterministic_preconditions_met_human_clinical_review_required."
+    )
+    assert view.summary_text == "Conditionally eligible — human review required."
+    assert "Not approved." in view.brief_explanation
+    assert "clinical review" in view.brief_explanation
+
+
+def test_operational_summaries_keep_eta_semantics_and_metrics() -> None:
+    order = parse_response(
+        "ORD-1001 line 1 (AV-IV22-BLU-LF): 100 ordered, 60 shipped, "
+        "0 carrier-reported delivered, 40 unshipped; state=partially_shipped. "
+        "[order_record=order-record; line_record=line-record]"
+    )
+    assert order.summary_text == "ORD-1001 line 1: Partially Shipped."
+    assert "40 remain unshipped" in order.brief_explanation
+    assert [metric.label for metric in order.metrics[:3]] == ["Ordered", "Shipped", "Unshipped"]
+
+    eta = parse_response(
+        "ORD-1002 line 1: 40 units unshipped; latest supplier restock estimate=2026-10-28; "
+        "hospital delivery date unknown. [supplier_record=ETA-002]"
+    )
+    assert eta.summary_text == "Supplier restock estimate: 2026-10-28."
+    assert "not a confirmed hospital delivery date" in eta.brief_explanation
+    assert "hospital delivery date unknown" not in eta.summary_text
+    assert "supplier_record=ETA-002" in eta.supporting_text or eta.citations

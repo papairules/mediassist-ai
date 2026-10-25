@@ -1,2 +1,8 @@
 # Databricks Apps installs this project as a regular (non-editable) package.
 .[ui]
+# Keep the temporary Community Cloud deployment aligned with the validated
+# Python 3.12 environment. Databricks Apps may continue to resolve the
+# package extras through its own deployment environment.
+streamlit==1.37.1
+databricks-sdk==0.156.0
+langgraph==1.2.16
