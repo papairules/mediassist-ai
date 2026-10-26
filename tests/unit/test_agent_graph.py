@@ -399,6 +399,126 @@ def test_order_route_executes_tool_and_returns_source_citations() -> None:
     assert classifier.calls == []
 
 
+@pytest.mark.parametrize("message", ["Hi", "Hello", "Hey", "Good morning", "Good afternoon", "Good evening"])
+def test_greeting_is_static_and_does_not_call_backend(message: str) -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("inventory"))
+
+    reply = _invoke(agent, service, classifier, message, "greeting-thread")
+
+    assert reply.intent == "greeting"
+    assert "I'm MediAssist AI" in reply.text
+    assert "What would you like to check?" in reply.text
+    assert classifier.calls == []
+    assert service.calls == []
+
+
+def test_combined_greeting_and_capability_question_is_static() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("order"))
+
+    reply = _invoke(
+        agent,
+        service,
+        classifier,
+        "Hi, what can you help me with?",
+        "capability-thread",
+    )
+
+    assert reply.intent == "capability"
+    assert "Where is ORD-1001?" in reply.text
+    assert "qualified human clinical review" in reply.text
+    assert classifier.calls == []
+    assert service.calls == []
+
+
+def test_greeting_preserves_verified_order_context() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier()
+    thread_id = "greeting-memory-thread"
+
+    _invoke(agent, service, classifier, "Where is ORD-1001?", thread_id)
+    reply = _invoke(agent, service, classifier, "Hello", thread_id)
+
+    assert reply.intent == "greeting"
+    assert [call[0] for call in service.calls] == ["order"]
+    snapshot = agent._graph.get_state({"configurable": {"thread_id": thread_id}})
+    assert snapshot.values["last_order_id"] == "ORD-1001"
+    assert snapshot.values["last_hospital_id"] == "H-E101"
+
+
+def test_broad_reporting_acknowledges_limit_and_scopes_demo_examples() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("order"))
+    demo_east = AuthorizationContext(
+        "DEMO_ONLY_cli_east",
+        {"H-E101": "East", "H-E102": "East"},
+        frozenset({"East"}),
+    )
+
+    reply = _invoke(
+        agent,
+        service,
+        classifier,
+        "Show me all delayed orders",
+        "report-thread",
+        demo_east,
+    )
+
+    assert reply.intent == "reporting"
+    assert "portfolio or daily order summary" in reply.text
+    assert "one authorized order lookup at a time" in reply.text
+    assert "ORD-1001" in reply.text and "ORD-1002" in reply.text
+    assert "ORD-1003" not in reply.text
+    assert "Which order would you like me to inspect?" in reply.text
+    assert classifier.calls == []
+    assert service.calls == []
+
+
+def test_broad_reporting_does_not_offer_synthetic_examples_outside_demo_scope() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier()
+    west = AuthorizationContext("trusted-west", {"H-W201": "West"}, frozenset({"West"}))
+
+    reply = _invoke(agent, service, classifier, "Summarize today's orders", "west-report", west)
+
+    assert reply.intent == "reporting"
+    assert "Please provide an order ID" in reply.text
+    assert "ORD-1001" not in reply.text
+    assert "ORD-1002" not in reply.text
+    assert service.calls == []
+
+
+def test_unsupported_request_gets_closest_supported_guidance() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("order"))
+
+    reply = _invoke(agent, service, classifier, "Can you create an order?", "unsupported-thread")
+
+    assert reply.intent == "unsupported"
+    assert "not available in this prototype" in reply.text
+    assert "one authorized order" in reply.text
+    assert classifier.calls == []
+    assert service.calls == []
+
+
+def test_ambiguous_order_status_request_asks_for_order_id() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier()
+
+    reply = _invoke(agent, service, classifier, "I need an order status", "ambiguous-order")
+
+    assert reply.intent == "clarification"
+    assert "Which order ID should I check?" in reply.text
+
+
 def test_followup_uses_thread_memory_but_other_thread_is_isolated() -> None:
     agent = MediAssistAgent()
     service = FakeService()

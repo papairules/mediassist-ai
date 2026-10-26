@@ -44,6 +44,29 @@ CANDIDATE_DISCOVERY_PATTERN = re.compile(
     r"\b(?:alternative(?:s)?|replacement(?:s)?|substitute options?|what else)\b",
     re.IGNORECASE,
 )
+GREETING_ONLY_PATTERN = re.compile(
+    r"^\s*(?:hi|hello|hey|good morning|good afternoon|good evening)[\s!,.?]*$",
+    re.IGNORECASE,
+)
+CAPABILITY_PATTERN = re.compile(
+    r"\b(?:what can you (?:do|help(?: me)?(?: with)?)|how can you help|what questions can i ask)\b|^\s*help[\s!,.?]*$",
+    re.IGNORECASE,
+)
+REPORTING_PATTERN = re.compile(
+    r"\b(?:show|list|summari[sz]e|summary)\b.*\b(?:all orders?|orders?|today|delayed|status)\b"
+    r"|\b(?:today['’]?s|daily)\s+(?:order\s+)?(?:status|summary|orders?)\b",
+    re.IGNORECASE,
+)
+UNSUPPORTED_REQUEST_PATTERN = re.compile(
+    r"\b(?:create|cancel|delete|update)\s+(?:an?\s+)?(?:order|shipment)|"
+    r"\b(?:forecast|dashboard|invoice|billing)\b",
+    re.IGNORECASE,
+)
+DEMO_ORDER_EXAMPLES = {
+    "East": ("ORD-1001", "ORD-1002"),
+    "West": ("ORD-1003", "ORD-1004"),
+    "Central": ("ORD-1006", "ORD-1010"),
+}
 
 
 class AgentState(TypedDict, total=False):
@@ -183,6 +206,14 @@ def _extract_slots(message: str) -> dict[str, str]:
 
 def _deterministic_intent(message: str, state: AgentState) -> str | None:
     lower = message.lower()
+    if GREETING_ONLY_PATTERN.fullmatch(message):
+        return "greeting"
+    if CAPABILITY_PATTERN.search(message):
+        return "capability"
+    if REPORTING_PATTERN.search(message):
+        return "reporting"
+    if UNSUPPORTED_REQUEST_PATTERN.search(message):
+        return "unsupported"
     if any(
         word in lower
         for word in (
@@ -279,6 +310,58 @@ def _route(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
 
 def _route_intent(state: AgentState) -> str:
     return state.get("intent", "clarification")
+
+
+def _greeting_node(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
+    return _complete(
+        "Hi! I'm MediAssist AI. I can help you track orders, check supplier restock "
+        "estimates, find regional inventory, and review potential product substitutions.\n\n"
+        "What would you like to check?"
+    )
+
+
+def _capability_node(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
+    return _complete(
+        "I can help with order and shipment visibility, supplier restock evidence, "
+        "regional inventory, contract and document evidence, and potential substitutions "
+        "that always require qualified human clinical review.\n\n"
+        "Examples:\n"
+        "- Where is ORD-1001?\n"
+        "- What is the supplier restock estimate for ORD-1003?\n"
+        "- Is BR-IV22-BLU-LF available in East?\n"
+        "- Can BR-IV22-BLU-LF replace AV-IV22-BLU-LF for hospital H-E102?\n\n"
+        "Which order, product, or substitution question would you like to check?"
+    )
+
+
+def _reporting_node(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
+    examples: list[str] = []
+    if runtime.context.authorization.principal_id.startswith("DEMO_ONLY"):
+        for region in sorted(runtime.context.authorization.allowed_regions):
+            examples.extend(DEMO_ORDER_EXAMPLES.get(region, ()))
+    example_text = (
+        " For this synthetic scope, example order IDs for individual lookup are: "
+        + ", ".join(dict.fromkeys(examples))
+        + "."
+        if examples
+        else " Please provide an order ID that is within your trusted scope."
+    )
+    return _complete(
+        "I understand you want a portfolio or daily order summary. This prototype "
+        "currently performs one authorized order lookup at a time; it does not define "
+        "or produce a complete delayed-order list or daily status report."
+        + example_text
+        + " Which order would you like me to inspect?"
+    )
+
+
+def _unsupported_node(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
+    return _complete(
+        "I understand you are asking for an operational report or action that is not "
+        "available in this prototype. I can instead inspect one authorized order, "
+        "supplier restock evidence, regional inventory, or a potential substitution. "
+        "Which order ID or product question should I check?"
+    )
 
 
 def _citation(row: Mapping[str, Any], record_fields: tuple[str, ...]) -> str:
@@ -753,9 +836,23 @@ def _render_verification(value: SubstitutionVerification) -> str:
 def _clarification_node(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
     if _needs_missing_order_clarification(runtime.context.message, state):
         return _clarify("Which order should I check for the remaining or unshipped units?")
+    lower = runtime.context.message.lower()
+    if any(word in lower for word in ("eta", "restock", "arrive", "arrival", "backorder")):
+        return _clarify("Which order ID should I check for supplier ETA evidence?")
+    if any(word in lower for word in ("inventory", "stock", "available", "availability")):
+        return _clarify("Which product SKU and region should I check for inventory?")
+    if any(word in lower for word in ("substitute", "substitution", "replace", "alternative")):
+        return _clarify(
+            "Please provide the requested SKU, candidate SKU, hospital, and order line "
+            "if the request is conditional."
+        )
+    if any(word in lower for word in ("contract", "brand lock", "amendment")):
+        return _clarify("Which hospital's contract or amendment should I check?")
+    if any(word in lower for word in ("order", "shipment", "track", "deliver", "status")):
+        return _clarify("Which order ID should I check?")
     return _clarify(
-        "Please clarify whether you need order tracking, supplier ETA, inventory, "
-        "contract rules, document evidence, or an exact substitution check."
+        "I can help with an order ID, supplier ETA, product SKU and region, or an "
+        "exact substitution question. What would you like to check?"
     )
 
 
@@ -805,6 +902,10 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     graph = StateGraph(AgentState, context_schema=RequestContext)
     graph.add_node("guard", _guard_scope)
     graph.add_node("route", _route)
+    graph.add_node("greeting", _greeting_node)
+    graph.add_node("capability", _capability_node)
+    graph.add_node("reporting", _reporting_node)
+    graph.add_node("unsupported", _unsupported_node)
     graph.add_node("order", _order_node)
     graph.add_node("backorder", _backorder_node)
     graph.add_node("inventory", _inventory_node)
@@ -818,6 +919,10 @@ def build_graph(checkpointer: Any | None = None) -> Any:
         "route",
         _route_intent,
         {
+            "greeting": "greeting",
+            "capability": "capability",
+            "reporting": "reporting",
+            "unsupported": "unsupported",
             "order": "order",
             "backorder": "backorder",
             "inventory": "inventory",
@@ -829,6 +934,10 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     )
     for node in (
         "order",
+        "greeting",
+        "capability",
+        "reporting",
+        "unsupported",
         "backorder",
         "inventory",
         "contract",
