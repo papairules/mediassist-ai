@@ -63,11 +63,29 @@ def _load_css() -> None:
     st.markdown(f"<style>{stylesheet}</style>", unsafe_allow_html=True)
 
 
-def _streamlit_cloud_secrets() -> dict[str, str]:
-    """Read allow-listed Community Cloud settings."""
+def _environment_has_managed_runtime(environ: dict[str, str]) -> bool:
+    """Return whether Databricks supplies the complete app configuration."""
 
+    required = (
+        "DATABRICKS_CLIENT_ID",
+        "MEDIASSIST_WAREHOUSE_ID",
+        "MEDIASSIST_VECTOR_INDEX",
+        "DATABRICKS_LLM_ENDPOINT",
+    )
+    return all(environ.get(key, "").strip() for key in required)
+
+
+def _streamlit_cloud_secrets() -> dict[str, str]:
+    """Read allow-listed Community Cloud settings when needed."""
+
+    if _environment_has_managed_runtime(dict(os.environ)):
+        return {}
     try:
-        return streamlit_secret_environment(st.secrets)
+        secrets = st.secrets
+        load_if_toml_exists = getattr(secrets, "load_if_toml_exists", None)
+        if load_if_toml_exists is not None and not load_if_toml_exists():
+            return {}
+        return streamlit_secret_environment(secrets)
     except (FileNotFoundError, KeyError):
         return {}
 

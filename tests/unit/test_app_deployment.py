@@ -14,6 +14,7 @@ from crestline_agent.cli import (
     DEFAULT_WAREHOUSE_ID,
 )
 import crestline_agent.graph as agent_graph
+import crestline_ui.app as ui_app
 from crestline_ui.app import (
     BACKEND_UNAVAILABLE_MESSAGE,
     MAX_PROMPT_CHARS,
@@ -153,6 +154,40 @@ def test_streamlit_cloud_without_oauth_secret_fails_closed() -> None:
     )
     assert not config.ready
     assert "OAuth client secret" in config.missing_resources
+
+
+def test_databricks_app_environment_bypasses_streamlit_secrets(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class SecretsMustNotBeRead:
+        def __getattribute__(self, name: str) -> object:
+            if name == "__class__":
+                return type(self)
+            raise AssertionError(f"st.secrets was accessed: {name}")
+
+    monkeypatch.setenv("DATABRICKS_CLIENT_ID", "app-service-principal")
+    monkeypatch.setenv("MEDIASSIST_WAREHOUSE_ID", "warehouse")
+    monkeypatch.setenv("MEDIASSIST_VECTOR_INDEX", "catalog.schema.index")
+    monkeypatch.setenv("DATABRICKS_LLM_ENDPOINT", "endpoint")
+    monkeypatch.setattr(ui_app.st, "secrets", SecretsMustNotBeRead())
+
+    assert ui_app._streamlit_cloud_secrets() == {}
+
+
+def test_missing_secrets_file_is_ignored_without_diagnostic(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    class NoSecretsFile:
+        def load_if_toml_exists(self) -> bool:
+            return False
+
+    monkeypatch.delenv("DATABRICKS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("MEDIASSIST_WAREHOUSE_ID", raising=False)
+    monkeypatch.delenv("MEDIASSIST_VECTOR_INDEX", raising=False)
+    monkeypatch.delenv("DATABRICKS_LLM_ENDPOINT", raising=False)
+    monkeypatch.setattr(ui_app.st, "secrets", NoSecretsFile())
+
+    assert ui_app._streamlit_cloud_secrets() == {}
 
 
 def test_missing_hosted_configuration_reports_names_without_values() -> None:
