@@ -3,6 +3,28 @@ from __future__ import annotations
 from crestline_ui.presentation import parse_response
 
 
+def test_static_guidance_responses_render_as_user_visible_text() -> None:
+    greeting = parse_response(
+        "Hi! I'm MediAssist AI. I can help you track orders, check supplier restock "
+        "estimates, find regional inventory, and review potential product substitutions.\n\n"
+        "What would you like to check?"
+    )
+    capability = parse_response("I can help with order visibility.\n\nWhich order should I check?")
+    reporting = parse_response(
+        "I understand you want a portfolio summary. This prototype checks one authorized order at a time."
+    )
+    unsupported = parse_response("I understand that request is not available in this prototype.")
+    clarification = parse_response("CLARIFICATION_REQUIRED: Which order ID should I check?")
+
+    assert greeting.summary_text == ""
+    assert greeting.brief_explanation == greeting.text
+    assert "Hi! I'm MediAssist AI." in greeting.brief_explanation
+    assert capability.brief_explanation == capability.text
+    assert reporting.brief_explanation == reporting.text
+    assert unsupported.brief_explanation == unsupported.text
+    assert clarification.summary_text == "Please clarify."
+
+
 def test_order_response_builds_structured_metrics_and_operational_sources() -> None:
     view = parse_response(
         "ORD-1001 line 1 (AV-IV22-BLU-LF): 100 ordered, 60 shipped, "

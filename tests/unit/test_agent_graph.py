@@ -17,6 +17,7 @@ from crestline_retrieval.models import (
     SubstitutionVerification,
 )
 from crestline_retrieval.service import RetrievalService
+from crestline_ui.presentation import parse_response
 
 
 AS_OF = date(2026, 10, 22)
@@ -410,6 +411,24 @@ def test_greeting_is_static_and_does_not_call_backend(message: str) -> None:
     assert reply.intent == "greeting"
     assert "I'm MediAssist AI" in reply.text
     assert "What would you like to check?" in reply.text
+    assert classifier.calls == []
+    assert service.calls == []
+
+
+def test_hi_user_visible_response_survives_presentation_rendering() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("inventory"))
+
+    reply = _invoke(agent, service, classifier, "hi", "user-visible-greeting")
+    view = parse_response(reply.text)
+
+    assert view.summary_text == ""
+    assert view.brief_explanation == (
+        "Hi! I'm MediAssist AI. I can help you track orders, check supplier restock "
+        "estimates, find regional inventory, and review potential product substitutions.\n\n"
+        "What would you like to check?"
+    )
     assert classifier.calls == []
     assert service.calls == []
 

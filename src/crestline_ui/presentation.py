@@ -375,7 +375,7 @@ def _operational_summary(text: str, metrics: tuple[Metric, ...]) -> tuple[str, s
         return "Access denied.", text.split(":", 1)[1].strip() if ":" in text else "The requested evidence is outside the trusted scope."
     if text.startswith("Semantic discovery only"):
         return "Document evidence found.", "Semantic matches are discovery only and are not approval evidence."
-    return "Evidence retrieved.", "Review the supporting evidence for the complete source details."
+    return "", text
 
 
 def _supporting_lines(text: str) -> str:
