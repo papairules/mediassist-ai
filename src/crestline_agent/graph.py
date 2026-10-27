@@ -29,13 +29,18 @@ from .tools import (
     BackorderEvidenceInput,
     ContractRulesInput,
     DocumentSearchInput,
+    MissingEtaListInput,
     OrderVisibilityInput,
+    OrderLineListInput,
+    OrderSummaryInput,
     ProductInventoryInput,
+    RegionInventoryListInput,
     SubstitutionInput,
 )
 
 
 ORDER_PATTERN = re.compile(r"\bORD-\d+\b", re.IGNORECASE)
+SHORT_ORDER_PATTERN = re.compile(r"\b(?:order\s*)?(\d{4})\b", re.IGNORECASE)
 HOSPITAL_PATTERN = re.compile(r"\bH-[EWC]\d{3}\b", re.IGNORECASE)
 SKU_PATTERN = re.compile(r"\b(?:AV|BR|NV)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b", re.IGNORECASE)
 LINE_PATTERN = re.compile(r"\bline\s+(\d+)\b", re.IGNORECASE)
@@ -53,13 +58,18 @@ CAPABILITY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 REPORTING_PATTERN = re.compile(
-    r"\b(?:show|list|summari[sz]e|summary)\b.*\b(?:all orders?|orders?|today|delayed|status)\b"
+    r"\b(?:show|list|summari[sz]e|summary)\b.*\b(?:all orders?|orders?|today|delayed|status|partially\s+shipped|outstanding|unshipped)\b"
     r"|\b(?:today['’]?s|daily)\s+(?:order\s+)?(?:status|summary|orders?)\b",
     re.IGNORECASE,
 )
 UNSUPPORTED_REQUEST_PATTERN = re.compile(
-    r"\b(?:create|cancel|delete|update)\s+(?:an?\s+)?(?:order|shipment)|"
-    r"\b(?:forecast|dashboard|invoice|billing)\b",
+    r"\b(?:create|cancel|delete|update)\s+(?:(?:an?|the)\s+)?(?:order|shipment)|"
+    r"\b(?:forecast|dashboard|invoice|billing)\b|"
+    r"\bresume\b.*\bconversation\b",
+    re.IGNORECASE,
+)
+RESOLUTION_PATTERN = re.compile(
+    r"\b(?:resolve|investigate|fulfill|next steps?|what should i do|what are my options?)\b",
     re.IGNORECASE,
 )
 DEMO_ORDER_EXAMPLES = {
@@ -139,7 +149,7 @@ def _after_guard(state: AgentState) -> str:
     return "end" if state.get("scope_violation") else "route"
 
 
-def _extract_slots(message: str) -> dict[str, str]:
+def _extract_slots(message: str, state: AgentState | None = None) -> dict[str, str]:
     slots: dict[str, str] = {}
     order = ORDER_PATTERN.search(message)
     hospital = HOSPITAL_PATTERN.search(message)
@@ -147,6 +157,13 @@ def _extract_slots(message: str) -> dict[str, str]:
     region = REGION_PATTERN.search(message)
     if order:
         slots["order_id"] = order.group(0).upper()
+    elif SHORT_ORDER_PATTERN.search(message) and (
+        re.search(r"\b(?:what about|check|show|where|status|switch|instead)\b", message, re.I)
+        or (state is not None and bool(state.get("last_order_id")))
+    ):
+        short_order = SHORT_ORDER_PATTERN.search(message)
+        if short_order:
+            slots["order_id"] = f"ORD-{short_order.group(1)}"
     if hospital:
         slots["hospital_id"] = hospital.group(0).upper()
     if line:
@@ -210,10 +227,33 @@ def _deterministic_intent(message: str, state: AgentState) -> str | None:
         return "greeting"
     if CAPABILITY_PATTERN.search(message):
         return "capability"
-    if REPORTING_PATTERN.search(message):
+    if REPORTING_PATTERN.search(message) or (
+        ("missing" in lower or "no supplier" in lower or "no eta" in lower)
+        and ("eta" in lower or "restock" in lower)
+    ) or (
+        any(word in lower for word in ("inventory", "stock", "availability"))
+        and (
+            (REGION_PATTERN.search(message) and SKU_PATTERN.search(message) is None)
+            or len(SKU_PATTERN.findall(message)) >= 2
+        )
+    ) or (
+        any(word in lower for word in ("partially shipped", "unshipped", "outstanding"))
+        and any(word in lower for word in ("how many", "which", "orders", "units"))
+    ) or (
+        "compare" in lower
+        and len(SKU_PATTERN.findall(message)) >= 2
+        and REGION_PATTERN.search(message) is not None
+    ) or re.search(r"\bany\s+other\s+orders?\b", lower):
         return "reporting"
     if UNSUPPORTED_REQUEST_PATTERN.search(message):
         return "unsupported"
+    if RESOLUTION_PATTERN.search(message) and (
+        ORDER_PATTERN.search(message)
+        or SHORT_ORDER_PATTERN.search(message)
+        or state.get("last_order_id")
+        or "option" in lower
+    ):
+        return "resolution"
     if any(
         word in lower
         for word in (
@@ -227,16 +267,34 @@ def _deterministic_intent(message: str, state: AgentState) -> str | None:
         )
     ):
         return "substitution"
+    if SHORT_ORDER_PATTERN.search(message) and re.search(
+        r"\b(?:what about|check|show|where|status|switch|instead)\b", message, re.I
+    ):
+        return "order"
     if any(word in lower for word in ("contract", "brand lock", "brand-lock", "amendment")):
         return "contract"
     if _needs_missing_order_clarification(message, state):
         return "clarification"
     if any(
         word in lower
-        for word in ("backorder", "eta", "remaining", "restock", "when will", "arrive", "arrival")
+        for word in (
+            "backorder",
+            "eta",
+            "remaining",
+            "restock",
+            "when will",
+            "arrive",
+            "arrival",
+            "hasn't shipped",
+            "hasn't it shipped",
+            "has not shipped",
+            "not shipped",
+        )
     ):
         if ORDER_PATTERN.search(message) or state.get("last_order_id"):
             return "backorder"
+    if ("outstanding quantity" in lower or "calculate" in lower) and state.get("last_order_id"):
+        return "backorder"
     if any(word in lower for word in ("inventory", "stock", "available", "availability")):
         return "inventory"
     if any(word in lower for word in ("ifu", "guide", "document evidence", "manufacturer instruction")):
@@ -297,7 +355,7 @@ def _valid_slot(key: str, value: str) -> bool:
 
 def _route(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
     message = runtime.context.message.strip()
-    slots = _extract_slots(message)
+    slots = _extract_slots(message, state)
     intent = _deterministic_intent(message, state)
     if intent is None:
         decision = runtime.context.classifier.classify(message, _safe_classifier_context(state))
@@ -335,27 +393,184 @@ def _capability_node(state: AgentState, runtime: Runtime[RequestContext]) -> Age
 
 
 def _reporting_node(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
-    examples: list[str] = []
-    if runtime.context.authorization.principal_id.startswith("DEMO_ONLY"):
-        for region in sorted(runtime.context.authorization.allowed_regions):
-            examples.extend(DEMO_ORDER_EXAMPLES.get(region, ()))
-    example_text = (
-        " For this synthetic scope, example order IDs for individual lookup are: "
-        + ", ".join(dict.fromkeys(examples))
-        + "."
-        if examples
-        else " Please provide an order ID that is within your trusted scope."
-    )
+    lower = runtime.context.message.lower()
+    tools = AgentTools(runtime.context.service, runtime.context.authorization)
+    requested_region = REGION_PATTERN.search(runtime.context.message)
+    if requested_region and not runtime.context.authorization.allows_region(
+        requested_region.group(1).title()
+    ):
+        return _complete(
+            "ACCESS_DENIED: the requested report is outside the trusted authorization scope."
+        )
+    if ("missing" in lower or "no supplier" in lower or "no eta" in lower) and (
+        "eta" in lower or "restock" in lower
+    ):
+        result = tools.list_missing_eta_orders(MissingEtaListInput())
+        title = "Open order lines with no supplier restock date"
+    elif (
+        "inventory" in lower
+        or "stock" in lower
+        or "available" in lower
+        or ("compare" in lower and len(SKU_PATTERN.findall(runtime.context.message)) >= 2)
+    ):
+        region = state.get("slots", {}).get("region") or state.get("last_region")
+        skus = tuple(match.upper() for match in SKU_PATTERN.findall(runtime.context.message))
+        result = tools.list_region_inventory(
+            RegionInventoryListInput(region=region, skus=skus[:10])
+        )
+        title = "Authorized regional inventory observations"
+    elif "partially" in lower:
+        result = tools.list_order_lines(OrderLineListInput(view="partially_shipped"))
+        title = "Partially shipped order lines"
+    elif "unshipped" in lower or "outstanding" in lower or "delayed" in lower:
+        result = tools.list_order_lines(OrderLineListInput(view="outstanding"))
+        title = "Outstanding order lines"
+    else:
+        result = tools.summarize_orders(OrderSummaryInput())
+        title = "Authorized order summary"
+    if result.status == EvidenceStatus.ACCESS_DENIED:
+        return _complete("ACCESS_DENIED: the requested report is outside the trusted authorization scope.")
+    if result.status == EvidenceStatus.NOT_FOUND:
+        return _complete(f"{title}: no authorized records matched.")
+    if not result.records:
+        return _complete(f"{title}: no authorized records matched.")
+    lines = [title + "."]
+    if "delayed" in lower:
+        lines.append(
+            "These are outstanding fulfillment facts; the prototype does not define "
+            "a delivery-delay rule."
+        )
+    for row in result.records:
+        if title == "Authorized order summary":
+            lines.append(
+                f"{row.get('order_id')}: {row.get('quantity_ordered')} ordered, "
+                f"{row.get('quantity_shipped')} shipped, {row.get('quantity_unshipped')} "
+                f"unshipped across {row.get('line_count')} line(s). "
+                f"[order_record={row.get('order_record_id')}; "
+                f"source_file={row.get('order_source_file_name', 'unknown')}]"
+            )
+        elif "inventory" in title:
+            observation = str(row.get("has_inventory_observation")).lower() == "true"
+            available = row.get("quantity_available") if observation else "unknown"
+            lines.append(
+                f"{row.get('region')} / {row.get('sku')}: observed={observation}, "
+                f"available={available}, snapshot={row.get('latest_current_snapshot_at')}. "
+                f"[product_record={row.get('product_record_id')}]"
+            )
+        elif title == "Open order lines with no supplier restock date":
+            eta = row.get("current_supplier_restock_date", "unknown")
+            lines.append(
+                f"{row.get('order_id')} line {row.get('line_id')} ({row.get('sku')}): "
+                f"{row.get('quantity_unshipped')} unshipped; supplier restock estimate="
+                f"{eta if eta is not None else 'unknown'}; not a hospital delivery promise. "
+                f"[order_record={row.get('order_record_id')}; "
+                f"supplier_record={row.get('current_supplier_eta_record_id', 'unknown')}]"
+            )
+        else:
+            lines.append(
+                f"{row.get('order_id')} line {row.get('line_id')} ({row.get('sku')}): "
+                f"{row.get('quantity_unshipped')} unshipped; state={row.get('line_fulfillment_state')}. "
+                f"[order_record={row.get('order_record_id')}; "
+                f"line_record={row.get('order_line_record_id')}; "
+                f"source_file={row.get('order_line_source_file_name', 'unknown')}]"
+            )
+    return _complete("\n".join(lines))
+
+
+def _resolution_node(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
+    slots = state.get("slots", {})
+    order_id = slots.get("order_id") or state.get("last_order_id")
+    if not order_id:
+        return _clarify("Which order ID should I investigate for resolution options?")
+    tools = AgentTools(runtime.context.service, runtime.context.authorization)
+    order = tools.get_order_visibility(OrderVisibilityInput(order_id))
+    failure = _access_or_missing(order)
+    if failure:
+        return _complete(failure, order_id=order_id)
+    lines = [f"Resolution review for {order_id} using authorized evidence:"]
+    any_unknown_eta = False
+    any_open_quantity = False
+    first = order.records[0]
+    for row in order.records:
+        line_id = str(row.get("line_id") or "")
+        hospital_id = str(row.get("hospital_id") or "")
+        region = str(row.get("region") or "")
+        sku = str(row.get("sku") or "")
+        unshipped = int(row.get("quantity_unshipped") or 0)
+        any_open_quantity = any_open_quantity or unshipped > 0
+        lines.append(
+            f"{order_id} line {line_id}: {row.get('quantity_ordered')} ordered, "
+            f"{row.get('quantity_shipped')} shipped, {unshipped} unshipped; "
+            f"state={row.get('line_fulfillment_state')}."
+        )
+        try:
+            eta = tools.get_backorder_evidence(BackorderEvidenceInput(order_id, line_id))
+            if eta.status == EvidenceStatus.FOUND and eta.records:
+                eta_row = eta.records[0]
+                restock = eta_row.get("current_supplier_restock_date")
+                any_unknown_eta = any_unknown_eta or (unshipped > 0 and restock is None)
+                lines.append(
+                    f"Supplier restock estimate={restock if restock is not None else 'unknown'}; "
+                    "this is not a confirmed hospital delivery date. "
+                    f"[supplier_record={eta_row.get('current_supplier_eta_record_id')}]"
+                )
+            else:
+                lines.append("Supplier ETA evidence could not be completed for this line.")
+        except Exception:
+            lines.append("Supplier ETA evidence could not be completed for this line.")
+        try:
+            inventory = tools.get_product_inventory(ProductInventoryInput(region, sku))
+            if inventory.status == EvidenceStatus.FOUND and inventory.records:
+                inv = inventory.records[0]
+                observed = str(inv.get("has_inventory_observation")).lower() == "true"
+                lines.append(
+                    f"Requested SKU regional inventory: observed={observed}, available="
+                    f"{inv.get('quantity_available') if observed else 'unknown'}."
+                )
+            else:
+                lines.append("Requested SKU inventory evidence could not be completed.")
+        except Exception:
+            lines.append("Requested SKU inventory evidence could not be completed.")
+        if unshipped > 0:
+            try:
+                candidates = _discover_and_verify_candidates(
+                    tools,
+                    requested_sku=sku,
+                    hospital_id=hospital_id,
+                    region=region,
+                    as_of=runtime.context.as_of,
+                    order_id=order_id,
+                    line_id=line_id,
+                )
+                candidate_text = candidates.get("response")
+                if candidate_text:
+                    lines.append(candidate_text)
+            except Exception:
+                lines.append("Substitution candidate checks could not be completed.")
+    if any_unknown_eta:
+        next_step = "Next action: request a supplier confirmation; no hospital delivery date is known."
+    elif any_open_quantity:
+        next_step = "Next action: review the listed fulfillment and substitution evidence with the appropriate operations and clinical teams."
+    else:
+        next_step = "Next action: no open quantity was observed; confirm the carrier evidence if delivery status is disputed."
+    lines.append(next_step)
     return _complete(
-        "I understand you want a portfolio or daily order summary. This prototype "
-        "currently performs one authorized order lookup at a time; it does not define "
-        "or produce a complete delayed-order list or daily status report."
-        + example_text
-        + " Which order would you like me to inspect?"
+        "\n".join(lines),
+        order_id=order_id,
+        line_id=str(first.get("line_id") or ""),
+        hospital_id=str(first.get("hospital_id") or ""),
+        sku=str(first.get("sku") or ""),
+        region=str(first.get("region") or ""),
     )
 
 
 def _unsupported_node(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
+    if "conversation" in runtime.context.message.lower() and "resume" in runtime.context.message.lower():
+        return _complete(
+            "I cannot resume another representative's conversation without a trusted user "
+            "identity. I can instead inspect one authorized order, supplier restock evidence, "
+            "regional inventory, or a potential substitution."
+        )
     return _complete(
         "I understand you are asking for an operational report or action that is not "
         "available in this prototype. I can instead inspect one authorized order, "
@@ -446,7 +661,8 @@ def _backorder_node(state: AgentState, runtime: Runtime[RequestContext]) -> Agen
         )
         rendered.append(
             f"{row.get('order_id')} line {row.get('line_id')}: "
-            f"{row.get('quantity_unshipped')} units unshipped; {eta_text}. "
+            f"{row.get('quantity_unshipped')} units unshipped "
+            f"(ordered minus shipped); {eta_text}. "
             f"[supplier_record={row.get('current_supplier_eta_record_id')}; "
             f"bronze_record={row.get('current_supplier_eta_bronze_record_id')}; "
             f"source_file={row.get('current_supplier_eta_source_file_name')}]"
@@ -498,7 +714,7 @@ def _inventory_node(state: AgentState, runtime: Runtime[RequestContext]) -> Agen
 
 
 def _contract_node(state: AgentState, runtime: Runtime[RequestContext]) -> AgentState:
-    hospital_id = state.get("slots", {}).get("hospital_id")
+    hospital_id = state.get("slots", {}).get("hospital_id") or state.get("last_hospital_id")
     if not hospital_id:
         return _clarify("Which hospital's contract rules should I check?")
     result = AgentTools(runtime.context.service, runtime.context.authorization).get_contract_rules(
@@ -850,6 +1066,8 @@ def _clarification_node(state: AgentState, runtime: Runtime[RequestContext]) -> 
         return _clarify("Which hospital's contract or amendment should I check?")
     if any(word in lower for word in ("order", "shipment", "track", "deliver", "status")):
         return _clarify("Which order ID should I check?")
+    if any(word in lower for word in ("resolve", "investigate", "fulfill", "next", "options")):
+        return _clarify("Which order ID should I investigate for resolution options?")
     return _clarify(
         "I can help with an order ID, supplier ETA, product SKU and region, or an "
         "exact substitution question. What would you like to check?"
@@ -905,6 +1123,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     graph.add_node("greeting", _greeting_node)
     graph.add_node("capability", _capability_node)
     graph.add_node("reporting", _reporting_node)
+    graph.add_node("resolution", _resolution_node)
     graph.add_node("unsupported", _unsupported_node)
     graph.add_node("order", _order_node)
     graph.add_node("backorder", _backorder_node)
@@ -922,6 +1141,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
             "greeting": "greeting",
             "capability": "capability",
             "reporting": "reporting",
+            "resolution": "resolution",
             "unsupported": "unsupported",
             "order": "order",
             "backorder": "backorder",
@@ -937,6 +1157,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
         "greeting",
         "capability",
         "reporting",
+        "resolution",
         "unsupported",
         "backorder",
         "inventory",

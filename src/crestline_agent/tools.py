@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
 
 from crestline_retrieval.models import (
     AuthorizationContext,
@@ -29,6 +30,29 @@ class BackorderEvidenceInput:
 class ProductInventoryInput:
     region: str
     sku: str
+
+
+@dataclass(frozen=True)
+class OrderLineListInput:
+    view: Literal["all", "outstanding", "partially_shipped", "unshipped"] = "all"
+    limit: int = 50
+
+
+@dataclass(frozen=True)
+class OrderSummaryInput:
+    limit: int = 50
+
+
+@dataclass(frozen=True)
+class MissingEtaListInput:
+    limit: int = 50
+
+
+@dataclass(frozen=True)
+class RegionInventoryListInput:
+    region: str | None = None
+    skus: tuple[str, ...] = ()
+    limit: int = 50
 
 
 @dataclass(frozen=True)
@@ -74,6 +98,27 @@ class AgentTools:
 
     def get_product_inventory(self, value: ProductInventoryInput) -> EvidenceResult:
         return self._service.get_product_inventory(value.region, value.sku, self._auth)
+
+    def list_order_lines(self, value: OrderLineListInput) -> EvidenceResult:
+        return self._service.list_order_lines(
+            self._auth,
+            view=value.view,
+            limit=value.limit,
+        )
+
+    def summarize_orders(self, value: OrderSummaryInput) -> EvidenceResult:
+        return self._service.summarize_orders(self._auth, limit=value.limit)
+
+    def list_missing_eta_orders(self, value: MissingEtaListInput) -> EvidenceResult:
+        return self._service.list_missing_eta_orders(self._auth, limit=value.limit)
+
+    def list_region_inventory(self, value: RegionInventoryListInput) -> EvidenceResult:
+        return self._service.list_region_inventory(
+            self._auth,
+            region=value.region,
+            skus=value.skus,
+            limit=value.limit,
+        )
 
     def search_document_evidence(self, value: DocumentSearchInput) -> DocumentSearchResult:
         return self._service.search_document_evidence(

@@ -123,7 +123,11 @@ class FakeService:
                     "line_id": "1",
                     "sku": "AV-IV22-BLU-LF",
                     "quantity_unshipped": 40,
-                    "current_supplier_restock_date": None if unknown else "2026-10-28",
+                    "current_supplier_restock_date": (
+                        None
+                        if unknown
+                        else ("2026-10-29" if order_id == "ORD-1002" else "2026-10-28")
+                    ),
                     "current_supplier_eta_record_id": (
                         "ETA-003-MISSING" if unknown else "ETA-001-NEW"
                     ),
@@ -156,6 +160,91 @@ class FakeService:
                             "record_id": "inventory-record",
                         }
                     ],
+                    "product_record_id": "product-record",
+                },
+            ),
+        )
+
+    def list_order_lines(
+        self,
+        auth: AuthorizationContext,
+        *,
+        view: str = "all",
+        limit: int = 50,
+    ) -> EvidenceResult:
+        del limit
+        self.calls.append(("list_order_lines", (auth.principal_id,), {"view": view}))
+        rows = [
+            {
+                "order_id": "ORD-1001",
+                "line_id": "1",
+                "hospital_id": "H-E101",
+                "sku": "AV-IV22-BLU-LF",
+                "quantity_ordered": 100,
+                "quantity_shipped": 60,
+                "quantity_unshipped": 40,
+                "line_fulfillment_state": "partially_shipped",
+                "order_record_id": "order-record",
+            },
+            {
+                "order_id": "ORD-1002",
+                "line_id": "1",
+                "hospital_id": "H-E102",
+                "sku": "AV-IV22-BLU-LF",
+                "quantity_ordered": 30,
+                "quantity_shipped": 0,
+                "quantity_unshipped": 30,
+                "line_fulfillment_state": "not_shipped",
+                "order_record_id": "order-record-2",
+            },
+        ]
+        if view == "partially_shipped":
+            rows = [rows[0]]
+        elif view == "unshipped":
+            rows = [rows[1]]
+        return EvidenceResult(EvidenceStatus.FOUND, tuple(rows))
+
+    def summarize_orders(self, auth: AuthorizationContext, *, limit: int = 50) -> EvidenceResult:
+        del limit
+        self.calls.append(("summarize_orders", (auth.principal_id,), {}))
+        return EvidenceResult(
+            EvidenceStatus.FOUND,
+            (
+                {
+                    "order_id": "ORD-1001",
+                    "line_count": 1,
+                    "quantity_ordered": 100,
+                    "quantity_shipped": 60,
+                    "quantity_unshipped": 40,
+                    "order_record_id": "order-record",
+                },
+            ),
+        )
+
+    def list_missing_eta_orders(self, auth: AuthorizationContext, *, limit: int = 50) -> EvidenceResult:
+        del limit
+        self.calls.append(("list_missing_eta_orders", (auth.principal_id,), {}))
+        return EvidenceResult(EvidenceStatus.FOUND, ())
+
+    def list_region_inventory(
+        self,
+        auth: AuthorizationContext,
+        *,
+        region: str | None = None,
+        skus: tuple[str, ...] = (),
+        limit: int = 50,
+    ) -> EvidenceResult:
+        del limit
+        self.calls.append(("list_region_inventory", (auth.principal_id,), {"region": region, "skus": skus}))
+        return EvidenceResult(
+            EvidenceStatus.FOUND,
+            (
+                {
+                    "region": region or "East",
+                    "sku": skus[0] if skus else "BR-IV22-BLU-LF",
+                    "has_inventory_observation": True,
+                    "quantity_available": 45,
+                    "latest_current_snapshot_at": "2026-10-22T22:30:00Z",
                     "product_record_id": "product-record",
                 },
             ),
@@ -469,7 +558,7 @@ def test_greeting_preserves_verified_order_context() -> None:
     assert snapshot.values["last_hospital_id"] == "H-E101"
 
 
-def test_broad_reporting_acknowledges_limit_and_scopes_demo_examples() -> None:
+def test_broad_reporting_returns_authorized_outstanding_lines() -> None:
     agent = MediAssistAgent()
     service = FakeService()
     classifier = StaticClassifier(IntentDecision("order"))
@@ -489,16 +578,14 @@ def test_broad_reporting_acknowledges_limit_and_scopes_demo_examples() -> None:
     )
 
     assert reply.intent == "reporting"
-    assert "portfolio or daily order summary" in reply.text
-    assert "one authorized order lookup at a time" in reply.text
+    assert "Outstanding order lines" in reply.text
     assert "ORD-1001" in reply.text and "ORD-1002" in reply.text
     assert "ORD-1003" not in reply.text
-    assert "Which order would you like me to inspect?" in reply.text
     assert classifier.calls == []
-    assert service.calls == []
+    assert service.calls[0][0] == "list_order_lines"
 
 
-def test_broad_reporting_does_not_offer_synthetic_examples_outside_demo_scope() -> None:
+def test_broad_reporting_does_not_offer_records_outside_trusted_scope() -> None:
     agent = MediAssistAgent()
     service = FakeService()
     classifier = StaticClassifier()
@@ -507,10 +594,9 @@ def test_broad_reporting_does_not_offer_synthetic_examples_outside_demo_scope() 
     reply = _invoke(agent, service, classifier, "Summarize today's orders", "west-report", west)
 
     assert reply.intent == "reporting"
-    assert "Please provide an order ID" in reply.text
-    assert "ORD-1001" not in reply.text
-    assert "ORD-1002" not in reply.text
-    assert service.calls == []
+    assert "Authorized order summary" in reply.text
+    assert "ORD-1001" in reply.text
+    assert service.calls[0][0] == "summarize_orders"
 
 
 def test_unsupported_request_gets_closest_supported_guidance() -> None:
@@ -567,6 +653,59 @@ def test_context_free_remaining_units_does_not_accept_inventory_classifier() -> 
     assert service.calls == []
 
 
+@pytest.mark.parametrize("question", ["What about 1002?", "Check 1002 instead.", "Now show 1003."])
+def test_short_order_references_are_canonicalized(question: str) -> None:
+    slots = _extract_slots(question)
+    assert slots["order_id"] in {"ORD-1002", "ORD-1003"}
+
+
+def test_resolution_planner_reuses_authorized_order_context() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier()
+
+    reply = _invoke(agent, service, classifier, "How can we resolve ORD-1002?", "resolution")
+
+    assert reply.intent == "resolution"
+    assert "Resolution review for ORD-1002" in reply.text
+    assert "Supplier restock estimate" in reply.text
+    assert "not a confirmed hospital delivery date" in reply.text
+    assert "Candidate BR-IV22-BLU-LF" in reply.text
+    assert "qualified human clinical review" in reply.text
+    assert [call[0] for call in service.calls][:3] == ["order", "backorder", "inventory"]
+
+
+def test_resolution_without_order_requests_specific_context() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    reply = _invoke(agent, service, StaticClassifier(), "What should I do next?", "resolution-missing")
+
+    assert reply.intent == "clarification"
+    assert "Which order ID" in reply.text
+    assert service.calls == []
+
+
+def test_resolution_preserves_order_when_inventory_check_fails() -> None:
+    class InventoryFailureService(FakeService):
+        def get_product_inventory(self, region: str, sku: str, auth: AuthorizationContext) -> EvidenceResult:
+            self.calls.append(("inventory", (region, sku, auth.principal_id), {}))
+            raise RuntimeError("synthetic inventory outage")
+
+    service = InventoryFailureService()
+    reply = _invoke(
+        MediAssistAgent(),
+        service,
+        StaticClassifier(),
+        "How can we resolve ORD-1002?",
+        "resolution-partial-failure",
+    )
+
+    assert reply.intent == "resolution"
+    assert "ORD-1002 line 1" in reply.text
+    assert "inventory evidence could not be completed" in reply.text
+    assert "supplier restock estimate" in reply.text.lower()
+
+
 def test_remaining_units_with_verified_order_context_stays_backorder() -> None:
     agent = MediAssistAgent()
     service = FakeService()
@@ -578,6 +717,18 @@ def test_remaining_units_with_verified_order_context_stays_backorder() -> None:
     assert reply.intent == "backorder"
     assert "ETA-001-NEW" in reply.text
     assert classifier.calls == []
+    assert [call[0] for call in service.calls] == ["order", "backorder"]
+
+
+def test_contextual_shipping_question_uses_evidence_not_a_fabricated_cause() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    _invoke(agent, service, StaticClassifier(), "Where is ORD-1001?", "shipping-context")
+    reply = _invoke(agent, service, StaticClassifier(), "Why hasn't it shipped?", "shipping-context")
+
+    assert reply.intent == "backorder"
+    assert "unshipped" in reply.text
+    assert "cause" not in reply.text.lower()
     assert [call[0] for call in service.calls] == ["order", "backorder"]
 
 

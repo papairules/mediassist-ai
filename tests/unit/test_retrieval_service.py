@@ -551,3 +551,65 @@ def test_contract_query_projects_no_pricing_and_fails_closed_on_leak(
         RetrievalService(FakeBackend({".contract_clauses": [unsafe]})).get_contract_rules(
             "H-E101", east_auth, as_of=AS_OF
         )
+
+
+def test_bounded_order_analytics_use_authorized_fixed_queries(
+    east_auth: AuthorizationContext,
+) -> None:
+    backend = FakeBackend(
+        {
+            ".order_line_fulfillment": [
+                {
+                    "order_id": "ORD-1001",
+                    "quantity_unshipped": 40,
+                    "order_record_id": "order-record",
+                }
+            ],
+            ".backorder_eta_evidence": [
+                {
+                    "order_id": "ORD-1008",
+                    "quantity_unshipped": 10,
+                    "current_supplier_restock_date": None,
+                }
+            ],
+        }
+    )
+    service = RetrievalService(backend)
+
+    lines = service.list_order_lines(east_auth, view="outstanding", limit=10)
+    summary = service.summarize_orders(east_auth, limit=10)
+    missing = service.list_missing_eta_orders(east_auth, limit=10)
+
+    assert lines.status == EvidenceStatus.FOUND
+    assert summary.status == EvidenceStatus.FOUND
+    assert missing.status == EvidenceStatus.FOUND
+    for call in backend.query_calls:
+        assert "authorized_hospital_0" in call.statement
+        assert "LIMIT 10" in call.statement
+        assert all(parameter.name.startswith("authorized_hospital_") for parameter in call.parameters)
+    assert "quantity_unshipped > 0" in backend.query_calls[0].statement
+    assert "current_supplier_restock_date IS NULL" in backend.query_calls[2].statement
+
+
+def test_region_inventory_analytics_preserve_scope_and_bound_inputs(
+    east_auth: AuthorizationContext,
+) -> None:
+    backend = FakeBackend({".product_region_inventory": [{"sku": "BR-IV22-BLU-LF"}]})
+    service = RetrievalService(backend)
+
+    result = service.list_region_inventory(
+        east_auth,
+        region="East",
+        skus=("BR-IV22-BLU-LF", "NV-IV22-BLU-LF"),
+        limit=5,
+    )
+
+    assert result.status == EvidenceStatus.FOUND
+    statement = backend.query_calls[0].statement
+    assert "region IN" in statement
+    assert "requested_region" in statement
+    assert "requested_sku_0" in statement
+    assert "LIMIT 5" in statement
+    with pytest.raises(ValueError):
+        service.list_region_inventory(east_auth, skus=tuple("SKU" for _ in range(11)))
+    assert service.list_region_inventory(AuthorizationContext("west", {"H-W201": "West"}, frozenset({"West"})), region="East").status == EvidenceStatus.ACCESS_DENIED

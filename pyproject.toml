@@ -44,6 +44,7 @@ publish_document_tables = "crestline_documents.publish_main:main"
 prepare_document_retrieval = "crestline_documents.retrieval_main:main"
 mediassist_chat = "crestline_agent.cli:main"
 mediassist_evaluate = "crestline_eval.runner:main"
+mediassist_analytics_evaluate = "crestline_eval.analytics_runner:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -52,7 +53,7 @@ where = ["src"]
 crestline_bronze = ["sources.yml"]
 crestline_gold = ["sql/*.sql"]
 crestline_ui = ["styles.css"]
-crestline_eval = ["golden_scenarios.json"]
+crestline_eval = ["golden_scenarios.json", "analytics_scenarios.json"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

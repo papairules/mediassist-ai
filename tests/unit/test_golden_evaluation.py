@@ -77,6 +77,23 @@ def test_golden_dataset_covers_required_safety_and_context_scenarios() -> None:
     assert "clinically approved" in serialized
 
 
+def test_analytics_matrix_has_thirty_safety_scoped_scenarios() -> None:
+    matrix = json.loads(
+        (Path(__file__).parents[2] / "src/crestline_eval/analytics_scenarios.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    scenarios = matrix["scenarios"]
+    assert len(scenarios) >= 30
+    assert len({scenario["id"] for scenario in scenarios}) == len(scenarios)
+    for scenario in scenarios:
+        assert scenario["turns"]
+        assert scenario["scope"] in {"east", "west", "central"}
+        assert scenario["expected_intent"]
+        assert scenario["expected_terms"]
+        assert scenario["forbidden_terms"]
+
+
 def test_local_golden_evaluation_passes_three_stable_runs(
     tmp_path: Path,
 ) -> None:

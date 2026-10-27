@@ -10,7 +10,7 @@ from importlib.resources import files
 import json
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable, Mapping, Sequence, cast
+from typing import Any, Callable, Literal, Mapping, Sequence, cast
 import uuid
 
 from crestline_agent.cli import (
@@ -223,6 +223,70 @@ class RecordingService:
                     order_id=order_id,
                     line_id=line_id,
                     request_text=request_text,
+                ),
+            ),
+        )
+
+    def list_order_lines(
+        self,
+        auth: AuthorizationContext,
+        *,
+        view: Literal["all", "outstanding", "partially_shipped", "unshipped"] = "all",
+        limit: int = 50,
+    ) -> EvidenceResult:
+        return cast(
+            EvidenceResult,
+            self._record(
+                "list_order_lines",
+                {"view": view, "limit": limit, "trusted_principal": auth.principal_id},
+                lambda: self._service.list_order_lines(auth, view=view, limit=limit),
+            ),
+        )
+
+    def summarize_orders(
+        self, auth: AuthorizationContext, *, limit: int = 50
+    ) -> EvidenceResult:
+        return cast(
+            EvidenceResult,
+            self._record(
+                "summarize_orders",
+                {"limit": limit, "trusted_principal": auth.principal_id},
+                lambda: self._service.summarize_orders(auth, limit=limit),
+            ),
+        )
+
+    def list_missing_eta_orders(
+        self, auth: AuthorizationContext, *, limit: int = 50
+    ) -> EvidenceResult:
+        return cast(
+            EvidenceResult,
+            self._record(
+                "list_missing_eta_orders",
+                {"limit": limit, "trusted_principal": auth.principal_id},
+                lambda: self._service.list_missing_eta_orders(auth, limit=limit),
+            ),
+        )
+
+    def list_region_inventory(
+        self,
+        auth: AuthorizationContext,
+        *,
+        region: str | None = None,
+        skus: Sequence[str] = (),
+        limit: int = 50,
+    ) -> EvidenceResult:
+        return cast(
+            EvidenceResult,
+            self._record(
+                "list_region_inventory",
+                {
+                    "region": region,
+                    "skus": tuple(skus),
+                    "limit": limit,
+                    "trusted_principal": auth.principal_id,
+                },
+                lambda: self._service.list_region_inventory(
+                    auth, region=region, skus=skus, limit=limit
                 ),
             ),
         )

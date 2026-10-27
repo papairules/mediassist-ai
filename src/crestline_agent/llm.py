@@ -21,6 +21,7 @@ ALLOWED_INTENTS = frozenset(
         "substitution",
         "document",
         "clarification",
+        "resolution",
     }
 )
 
@@ -50,7 +51,7 @@ class DatabricksIntentClassifier:
         prompt = (
             "Classify a medical-distribution support request. Return JSON only with keys "
             '"intent" and "slots". intent must be one of order, backorder, inventory, '
-            "contract, substitution, document, clarification. slots may contain only order_id, "
+            "contract, substitution, document, resolution, clarification. slots may contain only order_id, "
             "line_id, sku, requested_sku, candidate_sku, hospital_id, region. Do not "
             "answer the question, infer authorization, or make a clinical decision.\n"
             f"Safe prior references: {json.dumps(dict(safe_context), sort_keys=True)}\n"

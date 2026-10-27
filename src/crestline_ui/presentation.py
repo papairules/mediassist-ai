@@ -215,7 +215,7 @@ def _human_reasons(reason_codes: tuple[str, ...]) -> tuple[str, ...]:
 
 def _operational_citations(section: str) -> tuple[Citation, ...]:
     details: list[tuple[str, str]] = []
-    for field in ("product_record", "supplier_record"):
+    for field in ("order_record", "order_line_record", "product_record", "supplier_record"):
         for value in re.findall(rf"\b{field}=([^.;\s]+)", section):
             pair = (field, value)
             if pair not in details:

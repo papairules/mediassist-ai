@@ -223,3 +223,21 @@ def test_operational_summaries_keep_eta_semantics_and_metrics() -> None:
     assert "not a confirmed hospital delivery date" in eta.brief_explanation
     assert "hospital delivery date unknown" not in eta.summary_text
     assert "supplier_record=ETA-002" in eta.supporting_text or eta.citations
+
+
+def test_analytics_response_preserves_order_and_inventory_provenance() -> None:
+    view = parse_response(
+        "Outstanding order lines.\n"
+        "ORD-1001 line 1 (AV-IV22-BLU-LF): 40 unshipped; "
+        "[order_record=order-1001; product_record=product-av].\n"
+        "East / BR-IV22-BLU-LF: observed=True, available=45, "
+        "snapshot=2026-10-22T22:30:00Z. [product_record=product-br]"
+    )
+    assert view.brief_explanation
+    record_values = {
+        value
+        for citation in view.citations
+        for key, value in citation.details
+        if key.endswith("record")
+    }
+    assert {"order-1001", "product-av", "product-br"} <= record_values

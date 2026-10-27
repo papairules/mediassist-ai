@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 from .client import RetrievalBackend, RetrievalBackendError
 from .models import (
@@ -192,6 +192,146 @@ WHERE region = :region AND sku = :sku"""
             [_param("region", region), _param("sku", sku)],
         )
         return _rows_result(rows, "Product or region was not found")
+
+    @staticmethod
+    def _limit(value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 50:
+            raise ValueError("limit must be an integer between 1 and 50")
+        return value
+
+    def list_order_lines(
+        self,
+        auth: AuthorizationContext,
+        *,
+        view: Literal["all", "outstanding", "partially_shipped", "unshipped"] = "all",
+        limit: int = 50,
+    ) -> EvidenceResult:
+        """List authorized order lines using a fixed, bounded Gold query."""
+
+        if view not in {"all", "outstanding", "partially_shipped", "unshipped"}:
+            raise ValueError("unsupported order-line view")
+        hospital_filter, parameters = self._hospital_filter(auth)
+        if not hospital_filter:
+            return _access_denied("No hospital scope is authorized")
+        predicates = {
+            "all": "",
+            "outstanding": "\n  AND quantity_unshipped > 0",
+            "partially_shipped": "\n  AND line_fulfillment_state = 'partially_shipped'",
+            "unshipped": "\n  AND line_fulfillment_state = 'not_shipped'",
+        }
+        sql = f"""SELECT
+  hospital_id, hospital_name, region, order_id, line_id, sku,
+  quantity_ordered, quantity_shipped, quantity_carrier_reported_delivered,
+  quantity_unshipped, line_fulfillment_state, shipment_count,
+  latest_carrier_scan_at, order_record_id, order_line_record_id,
+  product_record_id, order_source_file_name, order_line_source_file_name,
+  product_source_file_name
+FROM {CATALOG}.{GOLD_SCHEMA}.order_line_fulfillment
+WHERE hospital_id IN ({hospital_filter}){predicates[view]}
+ORDER BY order_id, line_id
+LIMIT {self._limit(limit)}"""
+        rows = self._backend.query(sql, parameters)
+        return _rows_result(rows, "No authorized order lines matched")
+
+    def summarize_orders(
+        self,
+        auth: AuthorizationContext,
+        *,
+        limit: int = 50,
+    ) -> EvidenceResult:
+        """Return authorized order-level quantities without a delay interpretation."""
+
+        hospital_filter, parameters = self._hospital_filter(auth)
+        if not hospital_filter:
+            return _access_denied("No hospital scope is authorized")
+        sql = f"""SELECT
+  hospital_id, hospital_name, region, order_id,
+  count(*) AS line_count,
+  sum(quantity_ordered) AS quantity_ordered,
+  sum(quantity_shipped) AS quantity_shipped,
+  sum(quantity_carrier_reported_delivered) AS quantity_carrier_reported_delivered,
+  sum(quantity_unshipped) AS quantity_unshipped,
+  sum(CASE WHEN quantity_unshipped > 0 THEN 1 ELSE 0 END) AS outstanding_line_count,
+  order_record_id, order_source_file_name
+FROM {CATALOG}.{GOLD_SCHEMA}.order_line_fulfillment
+WHERE hospital_id IN ({hospital_filter})
+GROUP BY hospital_id, hospital_name, region, order_id, order_record_id,
+  order_source_file_name
+ORDER BY order_id
+LIMIT {self._limit(limit)}"""
+        rows = self._backend.query(sql, parameters)
+        return _rows_result(rows, "No authorized orders matched")
+
+    def list_missing_eta_orders(
+        self,
+        auth: AuthorizationContext,
+        *,
+        limit: int = 50,
+    ) -> EvidenceResult:
+        """List open lines whose current supplier restock date is unknown."""
+
+        hospital_filter, parameters = self._hospital_filter(auth)
+        if not hospital_filter:
+            return _access_denied("No hospital scope is authorized")
+        sql = f"""SELECT
+  hospital_id, hospital_name, region, order_id, line_id, sku,
+  quantity_ordered, quantity_shipped, quantity_unshipped,
+  line_fulfillment_state, current_supplier_restock_date,
+  supplier_eta_record_count, current_supplier_eta_record_id,
+  current_supplier_eta_source_id, current_supplier_eta_source_file_name,
+  supplier_eta_revision_history, order_record_id, order_line_record_id,
+  product_record_id
+FROM {CATALOG}.{GOLD_SCHEMA}.backorder_eta_evidence
+WHERE hospital_id IN ({hospital_filter})
+  AND quantity_unshipped > 0
+  AND current_supplier_restock_date IS NULL
+ORDER BY order_id, line_id
+LIMIT {self._limit(limit)}"""
+        rows = self._backend.query(sql, parameters)
+        return _rows_result(rows, "No authorized open lines with missing supplier ETA matched")
+
+    def list_region_inventory(
+        self,
+        auth: AuthorizationContext,
+        *,
+        region: str | None = None,
+        skus: Sequence[str] = (),
+        limit: int = 50,
+    ) -> EvidenceResult:
+        """Return bounded inventory rows for authorized regions and exact SKUs."""
+
+        if region is not None and not auth.allows_region(region):
+            return _access_denied("Region is outside the trusted authorization scope")
+        regions = sorted(auth.allowed_regions)
+        if not regions:
+            return _access_denied("No region scope is authorized")
+        region_parameters = [_param(f"authorized_region_{i}", value) for i, value in enumerate(regions)]
+        region_placeholders = ", ".join(f":{item.name}" for item in region_parameters)
+        predicates = [f"region IN ({region_placeholders})"]
+        parameters = list(region_parameters)
+        if region is not None:
+            predicates.append("region = :requested_region")
+            parameters.append(_param("requested_region", region))
+        if skus:
+            if len(skus) > 10 or any(not isinstance(sku, str) or not sku.strip() for sku in skus):
+                raise ValueError("skus must contain at most 10 non-empty values")
+            sku_parameters = [_param(f"requested_sku_{i}", sku) for i, sku in enumerate(skus)]
+            predicates.append("sku IN (" + ", ".join(f":{item.name}" for item in sku_parameters) + ")")
+            parameters.extend(sku_parameters)
+        sql = f"""SELECT
+  region, sku, brand, category, gauge, color, length_mm, latex_free,
+  sterile, manufacturer_status, has_inventory_observation,
+  warehouse_count, quantity_on_hand, quantity_reserved, quantity_available,
+  earliest_current_snapshot_at, latest_current_snapshot_at,
+  warehouse_inventory_evidence, product_source_id, product_record_id,
+  product_file_id, product_source_file_name, product_source_file_modified_at,
+  product_ingested_at
+FROM {CATALOG}.{GOLD_SCHEMA}.product_region_inventory
+WHERE {' AND '.join(predicates)}
+ORDER BY region, sku
+LIMIT {self._limit(limit)}"""
+        rows = self._backend.query(sql, parameters)
+        return _rows_result(rows, "No authorized inventory rows matched")
 
     def search_document_evidence(
         self,

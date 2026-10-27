@@ -167,7 +167,12 @@ def _order(order_id: str, hospital: str, quantity: int, shipped: int) -> dict[st
         ]
     return {
         "hospital_id": hospital,
-        "hospital_name": {"H-E101": "Crestwood East Hospital", "H-E102": "Maple Shore Medical Center", "H-W201": "Sierra Valley Hospital"}[hospital],
+        "hospital_name": {
+            "H-E101": "Crestwood East Hospital",
+            "H-E102": "Maple Shore Medical Center",
+            "H-W201": "Sierra Valley Hospital",
+            "H-W202": "Canyon Ridge Surgical Center",
+        }[hospital],
         "region": "West" if hospital.startswith("H-W") else "East",
         "contract_id": f"CTR-{hospital[2:]}",
         "order_id": order_id,
@@ -196,6 +201,7 @@ ORDERS = {
     "ORD-1001": _order("ORD-1001", "H-E101", 100, 60),
     "ORD-1002": _order("ORD-1002", "H-E102", 30, 0),
     "ORD-1003": _order("ORD-1003", "H-W201", 40, 0),
+    "ORD-1008": _order("ORD-1008", "H-W202", 10, 0),
 }
 
 
@@ -232,10 +238,12 @@ BACKORDERS = {
     "ORD-1001": _backorder("ORD-1001", "ETA-001-NEW", "2026-10-28"),
     "ORD-1002": _backorder("ORD-1002", "ETA-002-NEW", "2026-10-29"),
     "ORD-1003": _backorder("ORD-1003", "ETA-003-MISSING", None),
+    "ORD-1008": _backorder("ORD-1008", "ETA-008-MISSING", None),
 }
 
 
 INVENTORY = {
+    ("East", "AV-IV22-BLU-LF"): 0,
     ("East", "BR-IV22-BLU-LF"): 45,
     ("East", "BR-IV22-BLU-LX"): 190,
     ("East", "BR-IV20-PNK-LF"): 20,
@@ -314,9 +322,59 @@ class GoldenFixtureBackend:
             value for name, value in values.items() if name.startswith("authorized_hospital_")
         }
         if ".order_line_fulfillment" in statement:
-            row = ORDERS.get(values.get("order_id", ""))
-            return [dict(row)] if row and row["hospital_id"] in authorized else []
+            if "order_id" in values:
+                row = ORDERS.get(values.get("order_id", ""))
+                return [dict(row)] if row and row["hospital_id"] in authorized else []
+            if "GROUP BY" in statement:
+                summary_rows: list[Mapping[str, Any]] = []
+                for order in ORDERS.values():
+                    if order["hospital_id"] not in authorized:
+                        continue
+                    summary_rows.append(
+                        {
+                            "hospital_id": order["hospital_id"],
+                            "hospital_name": order["hospital_name"],
+                            "region": order["region"],
+                            "order_id": order["order_id"],
+                            "line_count": 1,
+                            "quantity_ordered": order["quantity_ordered"],
+                            "quantity_shipped": order["quantity_shipped"],
+                            "quantity_carrier_reported_delivered": order[
+                                "quantity_carrier_reported_delivered"
+                            ],
+                            "quantity_unshipped": order["quantity_unshipped"],
+                            "outstanding_line_count": int(order["quantity_unshipped"] > 0),
+                            "order_record_id": order["order_record_id"],
+                        }
+                    )
+                return summary_rows
+            line_rows: list[Mapping[str, Any]] = [
+                dict(row)
+                for row in ORDERS.values()
+                if row["hospital_id"] in authorized
+                and (
+                    "quantity_unshipped > 0" not in statement
+                    or row["quantity_unshipped"] > 0
+                )
+                and (
+                    "line_fulfillment_state = 'partially_shipped'" not in statement
+                    or row["line_fulfillment_state"] == "partially_shipped"
+                )
+                and (
+                    "line_fulfillment_state = 'not_shipped'" not in statement
+                    or row["line_fulfillment_state"] == "not_shipped"
+                )
+            ]
+            return line_rows
         if ".backorder_eta_evidence" in statement:
+            if "current_supplier_restock_date IS NULL" in statement:
+                return [
+                    dict(row)
+                    for row in BACKORDERS.values()
+                    if row["hospital_id"] in authorized
+                    and row["quantity_unshipped"] > 0
+                    and row["current_supplier_restock_date"] is None
+                ]
             row = BACKORDERS.get(values.get("order_id", ""))
             if row and row["hospital_id"] in authorized and (
                 "line_id" not in values or values["line_id"] == row["line_id"]
@@ -324,9 +382,29 @@ class GoldenFixtureBackend:
                 return [dict(row)]
             return []
         if ".product_region_inventory" in statement:
+            if any(name.startswith("authorized_region_") for name in values):
+                regions = {
+                    value for name, value in values.items() if name.startswith("authorized_region_")
+                }
+                requested_region = values.get("requested_region")
+                if requested_region:
+                    regions = {requested_region} & regions
+                requested_skus = {
+                    value for name, value in values.items() if name.startswith("requested_sku_")
+                }
+                inventory_rows: list[Mapping[str, Any]] = []
+                for (region, sku), available_quantity in INVENTORY.items():
+                    if region not in regions or (requested_skus and sku not in requested_skus):
+                        continue
+                    inventory_rows.append(_inventory(region, sku, available_quantity))
+                return inventory_rows
             key = (values.get("region", ""), values.get("sku", ""))
-            available = INVENTORY.get(key)
-            return [_inventory(*key, available)] if available is not None else []
+            available_for_key = INVENTORY.get(key)
+            return (
+                [_inventory(*key, available_for_key)]
+                if available_for_key is not None
+                else []
+            )
         if ".substitution_guide_rows" in statement:
             return [
                 dict(row)
