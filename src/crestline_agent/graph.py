@@ -254,6 +254,11 @@ def _deterministic_intent(message: str, state: AgentState) -> str | None:
         or "option" in lower
     ):
         return "resolution"
+    if re.search(r"\b(?:why|how come|explain)\b", lower) and re.search(
+        r"\b(?:blocked|rejected|denied|eligible|approved|candidate|alternative|substitution)\b",
+        lower,
+    ):
+        return "substitution"
     if any(
         word in lower
         for word in (
@@ -784,10 +789,16 @@ def _substitution_node(state: AgentState, runtime: Runtime[RequestContext]) -> A
         or (None if incompatible_inherited_order else state.get("last_sku"))
         or None
     )
+    ambiguous_candidate_reference = re.search(
+        r"\bthis\s+(?:alternative|candidate)\b",
+        runtime.context.message,
+        re.IGNORECASE,
+    ) is not None
     discovery_requested = (
         slots.get("candidate_sku") is None
         and slots.get("sku") is None
         and CANDIDATE_DISCOVERY_PATTERN.search(runtime.context.message) is not None
+        and not ambiguous_candidate_reference
     )
     candidate = slots.get("candidate_sku") or slots.get("sku")
     if candidate is None and not discovery_requested:

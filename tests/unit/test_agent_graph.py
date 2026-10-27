@@ -1060,3 +1060,104 @@ def test_inventory_contract_document_and_clarification_routes() -> None:
     assert document.intent == "document" and "Semantic discovery only" in document.text
     assert clarification.intent == "clarification"
     assert classifier.calls[-1][0] == "Please help me"
+
+
+def test_blocked_explanation_precedes_inventory_and_reuses_verified_context() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("inventory"))
+    initial = _invoke(
+        agent,
+        service,
+        classifier,
+        "Can BR-IV22-BLU-LX replace AV-IV22-BLU-LF for hospital H-E102, order ORD-1002, line 1?",
+        "blocked-explanation",
+    )
+    assert initial.intent == "substitution"
+    offset = len(service.calls)
+
+    explanation = _invoke(
+        agent,
+        service,
+        classifier,
+        "Why is BR-IV22-BLU-LX blocked even though inventory is available?",
+        "blocked-explanation",
+    )
+
+    assert explanation.intent == "substitution"
+    assert explanation.text.startswith("BLOCKED")
+    assert "current_guide_status_blocks_candidate" in explanation.text
+    assert "ifu_attributes_do_not_match" in explanation.text
+    assert [call[0] for call in service.calls[offset:]] == ["order", "substitution"]
+    assert classifier.calls == []
+
+
+def test_candidate_explanation_without_context_fails_closed() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    reply = _invoke(
+        agent,
+        service,
+        StaticClassifier(IntentDecision("inventory")),
+        "Why is BR-IV22-BLU-LX blocked even though inventory is available?",
+        "blocked-explanation-missing-context",
+    )
+
+    assert reply.intent == "substitution"
+    assert reply.text.startswith("CLARIFICATION_REQUIRED")
+    assert "missing order context" in reply.text
+    assert service.calls == []
+
+
+def test_ambiguous_this_alternative_does_not_select_from_discovery() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("inventory"))
+    _invoke(agent, service, classifier, "Where is ORD-1002?", "ambiguous-alternative")
+    _invoke(
+        agent,
+        service,
+        classifier,
+        "What alternatives are available?",
+        "ambiguous-alternative",
+    )
+    offset = len(service.calls)
+
+    reply = _invoke(
+        agent,
+        service,
+        classifier,
+        "Why is this alternative blocked?",
+        "ambiguous-alternative",
+    )
+
+    assert reply.intent == "substitution"
+    assert reply.text.startswith("CLARIFICATION_REQUIRED")
+    assert "candidate SKU" in reply.text or "missing order context" in reply.text
+    assert [call[0] for call in service.calls[offset:]] == ["order"]
+
+
+def test_why_eligible_preserves_human_review_only_outcome() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("inventory"))
+    _invoke(
+        agent,
+        service,
+        classifier,
+        "Can BR-IV22-BLU-LF replace AV-IV22-BLU-LF for hospital H-E102, order ORD-1002, line 1?",
+        "eligible-explanation",
+    )
+
+    reply = _invoke(
+        agent,
+        service,
+        classifier,
+        "Why is this approved?",
+        "eligible-explanation",
+    )
+
+    assert reply.intent == "substitution"
+    assert reply.text.startswith("ELIGIBLE_FOR_HUMAN_REVIEW—not approved")
+    assert "human clinical review" in reply.text
+    assert "clinically approved" not in reply.text.lower()

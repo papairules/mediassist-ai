@@ -138,7 +138,7 @@ def test_discovered_candidate_outcomes_remain_independent() -> None:
         "3 alternatives evaluated: 1 requires clinical review, 1 blocked, "
         "1 has insufficient evidence"
     )
-    assert view.candidate_headline == "Conditionally eligible — human review required."
+    assert view.candidate_headline == "Alternatives evaluated"
 
 
 def test_all_blocked_candidates_have_concise_summary_and_scoped_inventory() -> None:

@@ -141,6 +141,8 @@ class ResponseView:
         outcomes = {candidate.outcome for candidate in self.candidate_outcomes}
         if outcomes == {"BLOCKED"}:
             return "No — no eligible alternatives currently identified."
+        if len(outcomes) > 1:
+            return "Alternatives evaluated"
         if "ELIGIBLE_FOR_HUMAN_REVIEW" in outcomes:
             return "Conditionally eligible — human review required."
         return "Insufficient evidence — no candidate is currently eligible."
