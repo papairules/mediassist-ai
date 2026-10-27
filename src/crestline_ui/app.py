@@ -350,10 +350,19 @@ def _source_card(citation: Citation) -> None:
 def _assistant_message(text: str) -> None:
     view = parse_response(text)
     if view.candidate_outcomes:
-        st.markdown(
-            f'<div class="ma-discovery-summary">{html.escape(view.candidate_headline or "Alternatives evaluated")}</div>',
-            unsafe_allow_html=True,
-        )
+        if view.resolution_order_id:
+            st.markdown(
+                f"### Resolution plan — {html.escape(view.resolution_order_id)}"
+            )
+            if view.resolution_summary:
+                st.markdown(html.escape(view.resolution_summary))
+            _metric_cards(view)
+            st.markdown("#### Substitution assessment")
+        else:
+            st.markdown(
+                f'<div class="ma-discovery-summary">{html.escape(view.candidate_headline or "Alternatives evaluated")}</div>',
+                unsafe_allow_html=True,
+            )
         if view.candidate_summary and view.candidate_summary != view.candidate_headline:
             st.caption(view.candidate_summary)
         st.caption(
@@ -381,6 +390,15 @@ def _assistant_message(text: str) -> None:
         st.markdown(f"### {html.escape(view.summary_text)}")
     if view.brief_explanation:
         st.markdown(html.escape(view.brief_explanation))
+    if view.display_text.count("\n") >= 1 and (
+        view.display_text.startswith((
+            "Authorized order summary",
+            "Outstanding order lines",
+            "Partially shipped order lines",
+            "Open order lines with no supplier restock date",
+        ))
+    ):
+        st.markdown(html.escape(view.display_text))
     _metric_cards(view)
     if view.supporting_text or view.citations:
         with st.expander(f"View supporting evidence · {len(view.citations)}", expanded=False):

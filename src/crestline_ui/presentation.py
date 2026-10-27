@@ -100,6 +100,8 @@ class ResponseView:
     summary_text: str = ""
     brief_explanation: str = ""
     supporting_text: str = ""
+    resolution_order_id: str | None = None
+    resolution_summary: str = ""
 
     @property
     def candidate_summary(self) -> str | None:
@@ -282,17 +284,50 @@ def _metrics(text: str, *, include_substitution_inventory: bool = True) -> tuple
                 Metric("Fulfillment", order.group("state").replace("_", " ").title()),
             )
         )
+    elif planner_order := re.search(
+        r"(?P<ordered>\d+) ordered, (?P<shipped>\d+) shipped, "
+        r"(?P<unshipped>\d+) unshipped; state=(?P<state>[\w-]+)",
+        text,
+    ):
+        metrics.extend(
+            (
+                Metric("Ordered", planner_order.group("ordered"), "units"),
+                Metric("Shipped", planner_order.group("shipped"), "units"),
+                Metric("Unshipped", planner_order.group("unshipped"), "units"),
+                Metric("Fulfillment", planner_order.group("state").replace("_", " ").title()),
+            )
+        )
     backorder = re.search(r"(?P<count>\d+) units unshipped", text)
     if backorder and not order:
         metrics.append(Metric("Unshipped", backorder.group("count"), "units"))
-    supplier_date = re.search(r"latest supplier restock estimate=(?P<date>[^;\n]+)", text)
+    supplier_date = re.search(
+        r"(?:latest supplier restock estimate|Supplier restock estimate)="
+        r"(?P<date>[^;.\n]+)",
+        text,
+    )
     if supplier_date:
         metrics.append(Metric("Supplier restock estimate", supplier_date.group("date").strip()))
-    elif "supplier restock date unknown" in text.lower():
+    elif "supplier restock date unknown" in text.lower() or re.search(
+        r"Supplier restock estimate=unknown\b", text, re.IGNORECASE
+    ):
         metrics.append(Metric("Supplier restock estimate", "Unknown", "No date reported"))
     inventory = re.search(r"observed available quantity=(?P<count>-?\d+)", text)
     if inventory:
         metrics.append(Metric("Available inventory", inventory.group("count"), "observed units"))
+    requested_inventory = re.search(
+        r"Requested SKU regional inventory:\s*observed=(?P<observed>[^,;]+),\s*"
+        r"available=(?P<count>[^.\n]+)",
+        text,
+    )
+    if requested_inventory:
+        observed = requested_inventory.group("observed").strip().lower() == "true"
+        metrics.append(
+            Metric(
+                "Requested SKU inventory",
+                requested_inventory.group("count").strip() if observed else "Unknown",
+                "observed units" if observed else "observation missing",
+            )
+        )
     substitution_inventory = re.search(r"Inventory: observed=(?P<observed>[^,;]+), available=(?P<count>[^;\n]+)", text)
     if substitution_inventory and include_substitution_inventory:
         observed = substitution_inventory.group("observed").strip().lower() == "true"
@@ -393,9 +428,34 @@ def _supporting_lines(text: str) -> str:
     lines: list[str] = []
     for raw_line in text.splitlines():
         line = " ".join(CITATION_PATTERN.sub("", raw_line).split())
-        if line and line.startswith(prefixes):
+        if line and (
+            line.startswith(prefixes)
+            or re.match(r"^ORD-\d+\s+line\s+\d+\b", line)
+            or line.startswith("Supplier restock estimate=")
+            or line.startswith("Requested SKU regional inventory:")
+            or line.startswith("Next action:")
+        ):
             lines.append(line)
     return "\n\n".join(lines)
+
+
+def _resolution_summary(text: str) -> tuple[str | None, str]:
+    match = re.search(r"^Resolution review for (?P<order>ORD-\d+)\b", text, re.MULTILINE)
+    if not match:
+        return None, ""
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = " ".join(CITATION_PATTERN.sub("", raw_line).split())
+        if (
+            re.match(r"^ORD-\d+\s+line\s+\d+\b", line)
+            or line.startswith("Supplier restock estimate=")
+            or line.startswith("Supplier ETA evidence could not")
+            or line.startswith("Requested SKU regional inventory:")
+            or line.startswith("Requested SKU inventory evidence could not")
+            or line.startswith("Next action:")
+        ):
+            lines.append(line)
+    return match.group("order"), "\n\n".join(lines)
 
 
 def parse_response(text: str) -> ResponseView:
@@ -416,6 +476,7 @@ def parse_response(text: str) -> ResponseView:
         summary_text, brief_explanation = _brief_substitution(outcome, text)
     else:
         summary_text, brief_explanation = _operational_summary(text, metrics)
+    resolution_order_id, resolution_summary = _resolution_summary(text)
     return ResponseView(
         text=text,
         display_text="\n\n".join(clean_lines),
@@ -426,4 +487,6 @@ def parse_response(text: str) -> ResponseView:
         summary_text=summary_text,
         brief_explanation=brief_explanation,
         supporting_text=_supporting_lines(text),
+        resolution_order_id=resolution_order_id,
+        resolution_summary=resolution_summary,
     )

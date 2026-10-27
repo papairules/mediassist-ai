@@ -1,6 +1,44 @@
 from __future__ import annotations
 
+from datetime import date
+from typing import Any
+
+import crestline_ui.app as ui_app
+from crestline_agent.cli import build_demo_only_authorization
+from crestline_agent.graph import MediAssistAgent
+from crestline_eval.fixtures import GoldenFixtureBackend
+from crestline_eval.runner import DeterministicClassifier
+from crestline_retrieval.service import RetrievalService
 from crestline_ui.presentation import parse_response
+
+
+class _Column:
+    def __enter__(self) -> "_Column":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+
+class _StreamlitCapture:
+    def __init__(self) -> None:
+        self.markdowns: list[str] = []
+        self.captions: list[str] = []
+
+    def markdown(self, value: str, **kwargs: Any) -> None:
+        del kwargs
+        self.markdowns.append(value)
+
+    def caption(self, value: str, **kwargs: Any) -> None:
+        del kwargs
+        self.captions.append(value)
+
+    def columns(self, count: int) -> list[_Column]:
+        return [_Column() for _ in range(count)]
+
+    def expander(self, label: str, **kwargs: Any) -> _Column:
+        del label, kwargs
+        return _Column()
 
 
 def test_static_guidance_responses_render_as_user_visible_text() -> None:
@@ -223,6 +261,89 @@ def test_operational_summaries_keep_eta_semantics_and_metrics() -> None:
     assert "not a confirmed hospital delivery date" in eta.brief_explanation
     assert "hospital delivery date unknown" not in eta.summary_text
     assert "supplier_record=ETA-002" in eta.supporting_text or eta.citations
+
+
+def test_resolution_plan_preserves_operational_summary_and_metrics() -> None:
+    view = parse_response(
+        "Resolution review for ORD-1002 using authorized evidence:\n"
+        "ORD-1002 line 1: 30 ordered, 0 shipped, 30 unshipped; state=not_shipped.\n"
+        "Supplier restock estimate=2026-10-29; this is not a confirmed hospital delivery date. [supplier_record=ETA-002]\n"
+        "Requested SKU regional inventory: observed=True, available=0.\n"
+        "Candidate BR-IV22-BLU-LF:\nELIGIBLE_FOR_HUMAN_REVIEW—not approved.\n"
+        "Next action: request a supplier confirmation; no hospital delivery date is known."
+    )
+    assert view.resolution_order_id == "ORD-1002"
+    assert "30 ordered, 0 shipped, 30 unshipped" in view.resolution_summary
+    assert "Next action:" in view.resolution_summary
+    assert "Supplier restock estimate=2026-10-29" in view.supporting_text
+    assert "Requested SKU regional inventory: observed=True, available=0" in view.supporting_text
+    assert [(metric.label, metric.value) for metric in view.metrics] == [
+        ("Ordered", "30"),
+        ("Shipped", "0"),
+        ("Unshipped", "30"),
+        ("Fulfillment", "Not Shipped"),
+        ("Supplier restock estimate", "2026-10-29"),
+        ("Requested SKU inventory", "0"),
+    ]
+
+
+def test_streamlit_renders_resolution_plan_and_partial_listing(monkeypatch: Any) -> None:
+    capture = _StreamlitCapture()
+    monkeypatch.setattr(ui_app, "st", capture)
+    service = RetrievalService(GoldenFixtureBackend())
+    auth = build_demo_only_authorization("east")
+    agent = MediAssistAgent()
+    planner = agent.invoke(
+        "How can we resolve ORD-1002?",
+        thread_id="ui-resolution-test",
+        service=service,
+        authorization=auth,
+        classifier=DeterministicClassifier(),
+        as_of=date(2026, 10, 22),
+    )
+    ui_app._assistant_message(planner.text)
+    assert any("Resolution plan — ORD-1002" in value for value in capture.markdowns)
+    assert any("30 ordered, 0 shipped, 30 unshipped" in value for value in capture.markdowns)
+    assert any("Substitution assessment" in value for value in capture.markdowns)
+    assert any("Conditionally eligible" in value for value in capture.markdowns)
+
+    capture.markdowns.clear()
+    listing = agent.invoke(
+        "Which orders are partially shipped?",
+        thread_id="ui-report-test",
+        service=service,
+        authorization=auth,
+        classifier=DeterministicClassifier(),
+        as_of=date(2026, 10, 22),
+    )
+    ui_app._assistant_message(listing.text)
+    rendered = "\n".join(capture.markdowns)
+    assert "ORD-1001" in rendered
+    assert "40 unshipped" in rendered
+
+    capture.markdowns.clear()
+    empty = agent.invoke(
+        "Which outstanding orders have no supplier ETA?",
+        thread_id="ui-empty-report-test",
+        service=service,
+        authorization=auth,
+        classifier=DeterministicClassifier(),
+        as_of=date(2026, 10, 22),
+    )
+    ui_app._assistant_message(empty.text)
+    assert any("no authorized records matched" in value for value in capture.markdowns)
+
+    capture.markdowns.clear()
+    shorthand = agent.invoke(
+        "What about 1001?",
+        thread_id="ui-shorthand-test",
+        service=service,
+        authorization=auth,
+        classifier=DeterministicClassifier(),
+        as_of=date(2026, 10, 22),
+    )
+    ui_app._assistant_message(shorthand.text)
+    assert any("ORD-1001" in value and "40 unshipped" in value for value in capture.markdowns)
 
 
 def test_analytics_response_preserves_order_and_inventory_provenance() -> None:
