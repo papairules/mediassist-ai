@@ -227,6 +227,13 @@ def _deterministic_intent(message: str, state: AgentState) -> str | None:
         return "greeting"
     if CAPABILITY_PATTERN.search(message):
         return "capability"
+    if RESOLUTION_PATTERN.search(message) and (
+        ORDER_PATTERN.search(message)
+        or SHORT_ORDER_PATTERN.search(message)
+        or state.get("last_order_id")
+        or "option" in lower
+    ):
+        return "resolution"
     if REPORTING_PATTERN.search(message) or (
         ("missing" in lower or "no supplier" in lower or "no eta" in lower)
         and ("eta" in lower or "restock" in lower)
@@ -247,13 +254,6 @@ def _deterministic_intent(message: str, state: AgentState) -> str | None:
         return "reporting"
     if UNSUPPORTED_REQUEST_PATTERN.search(message):
         return "unsupported"
-    if RESOLUTION_PATTERN.search(message) and (
-        ORDER_PATTERN.search(message)
-        or SHORT_ORDER_PATTERN.search(message)
-        or state.get("last_order_id")
-        or "option" in lower
-    ):
-        return "resolution"
     if re.search(r"\b(?:why|how come|explain)\b", lower) and re.search(
         r"\b(?:blocked|rejected|denied|eligible|approved|candidate|alternative|substitution)\b",
         lower,

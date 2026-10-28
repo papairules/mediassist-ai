@@ -675,6 +675,80 @@ def test_resolution_planner_reuses_authorized_order_context() -> None:
     assert [call[0] for call in service.calls][:3] == ["order", "backorder", "inventory"]
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        (
+            "Investigate ORD-1002 and recommend the next operational steps to resolve any "
+            "outstanding units. Include order fulfillment, supplier restock estimates, "
+            "regional inventory, potential substitution candidates, and the supporting evidence."
+        ),
+        "Investigate ORD-1002 and recommend the next steps to resolve this order.",
+    ],
+)
+def test_explicit_order_investigation_precedes_reporting_patterns(question: str) -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("reporting"))
+
+    reply = _invoke(agent, service, classifier, question, "investigation-priority")
+
+    assert reply.intent == "resolution"
+    assert "Resolution review for ORD-1002" in reply.text
+    assert "Supplier restock estimate" in reply.text
+    assert "regional inventory" in reply.text.lower()
+    assert "Candidate BR-IV22-BLU-LF" in reply.text
+    assert "not a confirmed hospital delivery date" in reply.text
+    assert service.calls[0][0] == "order"
+    assert "list_order_lines" not in [call[0] for call in service.calls]
+    assert classifier.calls == []
+
+
+def test_followup_resolution_uses_verified_order_context_before_reporting() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("reporting"))
+    _invoke(agent, service, classifier, "Where is ORD-1002?", "resolution-followup")
+
+    reply = _invoke(
+        agent,
+        service,
+        classifier,
+        "Investigate the outstanding units and recommend the next steps.",
+        "resolution-followup",
+    )
+
+    assert reply.intent == "resolution"
+    assert "Resolution review for ORD-1002" in reply.text
+    assert service.calls[-1][0] != "list_order_lines"
+
+
+def test_standard_reporting_and_inventory_questions_keep_their_routes() -> None:
+    agent = MediAssistAgent()
+    service = FakeService()
+    classifier = StaticClassifier(IntentDecision("resolution"))
+
+    reporting = _invoke(
+        agent,
+        service,
+        classifier,
+        "Show all partially shipped orders.",
+        "standard-reporting",
+    )
+    inventory = _invoke(
+        agent,
+        service,
+        classifier,
+        "Compare inventory for BR-IV22-BLU-LF and BR-IV22-BLU-LX in East.",
+        "standard-inventory",
+    )
+
+    assert reporting.intent == "reporting"
+    assert "Partially shipped order lines" in reporting.text
+    assert inventory.intent == "reporting"
+    assert "Authorized regional inventory observations" in inventory.text
+
+
 def test_resolution_without_order_requests_specific_context() -> None:
     agent = MediAssistAgent()
     service = FakeService()
